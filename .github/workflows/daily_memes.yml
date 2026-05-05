@@ -1,0 +1,33 @@
+name: Daily Meme Creator
+
+on:
+  schedule:
+    - cron: '30 3 * * *'   # 3:30 AM UTC = 9 AM India time
+  workflow_dispatch:        # lets you run manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install tools
+        run: |
+          pip install pillow
+        
+      - name: Run meme maker
+        run: python meme_automation.py
+        
+      - name: Upload memes
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-memes
+          path: |
+            *.png
+            daily_memes.json
