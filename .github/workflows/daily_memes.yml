@@ -3,7 +3,7 @@ name: Daily Meme Creator
 on:
   schedule:
     - cron: '30 3 * * *'   # 3:30 AM UTC = 9 AM India time
-  workflow_dispatch:        # lets you run manually
+  workflow_dispatch:
 
 jobs:
   build:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-      
+        
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -19,7 +19,7 @@ jobs:
           
       - name: Install tools
         run: |
-          pip install pillow
+          pip install pillow requests
         
       - name: Run mega meme bot
         run: python mega_meme_bot.py
@@ -30,4 +30,5 @@ jobs:
           name: my-memes
           path: |
             *.png
-            daily_memes.json
+            *.json
+            *.txt
