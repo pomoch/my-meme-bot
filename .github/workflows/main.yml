@@ -18,7 +18,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pillow moviepy google-generativeai opennsfw2==1.0.1
+        run: pip install requests pillow moviepy google-generativeai opennsfw2
 
       - name: Run influencer script
         env:
