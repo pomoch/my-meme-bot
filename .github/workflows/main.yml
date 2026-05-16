@@ -1,0 +1,29 @@
+name: Daily AI Influencer Post
+
+on:
+  schedule:
+    - cron: '0 10 * * *'  # Runs every day at 10:00 UTC
+  workflow_dispatch:       # Allows you to trigger manually if you want
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pillow moviepy google-generativeai opennsfw2==1.0.1
+
+      - name: Run influencer script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FANVUE_API_KEY: ${{ secrets.FANVUE_API_KEY }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}  # optional
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}       # optional
+        run: python main.py
