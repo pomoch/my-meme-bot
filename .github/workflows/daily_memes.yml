@@ -22,7 +22,7 @@ jobs:
           pip install pillow requests
         
       - name: Run mega meme bot
-        run: python ultimate_meme_bot.py
+        run: python clean_meme_bot.py
         
       - name: Upload memes
         uses: actions/upload-artifact@v6
