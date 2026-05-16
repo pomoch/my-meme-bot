@@ -18,7 +18,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pillow moviepy google-genai "opennsfw2[tf-keras]"
+        run: pip install requests pillow moviepy "opennsfw2[tf-keras]"
 
       - name: Run influencer script
         env:
