@@ -25,7 +25,7 @@ jobs:
         run: python mega_meme_bot.py
         
       - name: Upload memes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: my-memes
           path: |
