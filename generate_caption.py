@@ -15,7 +15,6 @@ def create_caption(scene_description):
         if resp.status_code == 200:
             return resp.text.strip()
         else:
-            # Fallback if Pollinations fails
             return "New outfit, who dis? ✨"
     except Exception:
         return "New outfit, who dis? ✨"
