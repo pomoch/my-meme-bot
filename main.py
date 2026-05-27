@@ -1,18 +1,17 @@
 import os
-import random
 import requests
 import base64
 from generate_image import generate_fashion_images
 from generate_video import create_transition_video
 from generate_caption import create_caption
 from safety_check import is_safe
-from post_fanvue import post_to_fanvue
-from post_social import post_to_instagram, post_to_tiktok
+from post_instagram import post_to_instagram
+from post_tiktok import post_to_tiktok
 
 def main():
-    print("🚀 Starting daily influencer content generation...")
+    print("🚀 Starting daily AI influencer content generation...")
 
-    # 1. Create an outfit sequence for "dress up with me"
+    # 1. Create outfit images
     styles = [
         "a beautiful woman wearing a casual summer dress in a brunch cafe",
         "the same woman in a sexy leather outfit at a rooftop bar",
@@ -22,12 +21,10 @@ def main():
     for i, style in enumerate(styles):
         img_url = generate_fashion_images(style)
         if img_url:
-            # Download the image to memory (we'll need it for video and posting)
             resp = requests.get(img_url)
             if resp.status_code == 200:
-                image_bytes = resp.content
                 with open(f"outfit_{i+1}.jpg", "wb") as f:
-                    f.write(image_bytes)
+                    f.write(resp.content)
                 images.append(f"outfit_{i+1}.jpg")
                 print(f"✅ Image {i+1} generated")
             else:
@@ -39,13 +36,13 @@ def main():
         print("Not enough images, aborting.")
         return
 
-    # 2. Safety check (SFW) – crucial!
+    # 2. Safety check (SFW) – still crucial for Instagram/TikTok policies
     for img_path in images:
         if not is_safe(img_path):
             print(f"⚠️ Unsafe content detected in {img_path}, aborting.")
             return
 
-    # 3. Create a short video (slideshow with transitions)
+    # 3. Create a short video (slideshow)
     video_path = create_transition_video(images, output="outfit_video.mp4")
     print(f"🎬 Video created: {video_path}")
 
@@ -53,21 +50,29 @@ def main():
     caption = create_caption("A day of outfit changes from brunch to dinner")
     print(f"💬 Caption: {caption}")
 
-    # 5. Post to Fanvue (primary monetization)
-    # We'll post the first image as the main photo, and the video as extra
-    with open(images[0], "rb") as f:
-        image_data = base64.b64encode(f.read()).decode("utf-8")
-    with open(video_path, "rb") as f:
-        video_data = base64.b64encode(f.read()).decode("utf-8")
+    # 5. Post to Instagram (image + caption)
+    if os.getenv("INSTAGRAM_ACCESS_TOKEN") and os.getenv("INSTAGRAM_USER_ID"):
+        result = post_to_instagram(
+            image_path=images[0],
+            caption=caption,
+            access_token=os.getenv("INSTAGRAM_ACCESS_TOKEN"),
+            ig_user_id=os.getenv("INSTAGRAM_USER_ID")
+        )
+        print(f"📸 Instagram post result: {result}")
+    else:
+        print("⚠️ Instagram token or user ID not set, skipping Instagram post.")
 
-    fanvue_result = post_to_fanvue(caption, image_data, video_data)
-    print(f"📢 Fanvue post result: {fanvue_result}")
-
-    # 6. Optional: also post to social media if keys are set
-    if os.getenv("INSTAGRAM_ACCESS_TOKEN"):
-        post_to_instagram(caption, images[0])
-    if os.getenv("TIKTOK_ACCESS_TOKEN"):
-        post_to_tiktok(caption, video_path)
+    # 6. Post to TikTok (video + caption)
+    if os.getenv("TIKTOK_ACCESS_TOKEN") and os.getenv("TIKTOK_OPEN_ID"):
+        result = post_to_tiktok(
+            video_path=video_path,
+            caption=caption,
+            access_token=os.getenv("TIKTOK_ACCESS_TOKEN"),
+            open_id=os.getenv("TIKTOK_OPEN_ID")
+        )
+        print(f"🎵 TikTok post result: {result}")
+    else:
+        print("⚠️ TikTok token or open ID not set, skipping TikTok post.")
 
 if __name__ == "__main__":
     main()
