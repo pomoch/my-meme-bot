@@ -5,6 +5,7 @@ from moviepy import (
 import numpy as np
 import random
 import cv2
+import os
 
 def ken_burns_effect(clip, duration=3.0, zoom_ratio=0.04, pan_range=0.05):
     w, h = clip.size
@@ -32,17 +33,12 @@ def add_wiggle(clip):
     return clip.transform(wiggle_frame)
 
 def sharpen_frame(clip):
-    """
-    Apply a sharpening kernel to every frame using OpenCV.
-    Kernel: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]]
-    This is a classic sharpening filter.
-    """
+    """Sharpen every frame with a strong kernel."""
     kernel = np.array([[0, -1, 0],
                        [-1, 5, -1],
                        [0, -1, 0]], dtype=np.float32)
     def make_sharp(t):
         frame = clip.get_frame(t)
-        # frame is RGB, convert to BGR for OpenCV then back
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         sharpened_bgr = cv2.filter2D(frame_bgr, -1, kernel)
         sharpened_rgb = cv2.cvtColor(sharpened_bgr, cv2.COLOR_BGR2RGB)
@@ -52,7 +48,11 @@ def sharpen_frame(clip):
 def create_themed_video(image_paths, title_text="✨ Video ✨",
                         video_style="slow", wiggle=False,
                         output="daily_video.mp4"):
-    # Duration and zoom based on style
+    # Check image existence
+    for img in image_paths:
+        if not os.path.exists(img):
+            raise FileNotFoundError(f"Image {img} not found")
+    
     if video_style == "fast":
         duration = 1.5
         zoom_ratio = 0.02
@@ -64,27 +64,36 @@ def create_themed_video(image_paths, title_text="✨ Video ✨",
         zoom_ratio = 0.04
 
     clips = []
-    # Title clip
-    txt = TextClip(
-        text=title_text,
-        font_size=70,
-        color='white',
-        font='Arial-Bold',
-        stroke_color='black',
-        stroke_width=3,
-        size=(1080, 200)
-    ).with_position(('center', 'center')).with_duration(1.5)
+    # Title clip – try common fonts, fallback to default
+    try:
+        txt = TextClip(
+            text=title_text,
+            font_size=70,
+            color='white',
+            font='Arial-Bold',
+            stroke_color='black',
+            stroke_width=3,
+            size=(1080, 200)
+        )
+    except:
+        # Fallback to default font if Arial not available
+        txt = TextClip(
+            text=title_text,
+            font_size=70,
+            color='white',
+            stroke_color='black',
+            stroke_width=3,
+            size=(1080, 200)
+        )
+    txt = txt.with_position(('center', 'center')).with_duration(1.5)
     bg = ColorClip(size=(1080, 1350), color=(0,0,0)).with_duration(1.5)
     title_clip = CompositeVideoClip([bg, txt], size=(1080, 1350))
     clips.append(title_clip)
 
     for img_path in image_paths:
         clip = ImageClip(img_path).resized((1080, 1350))
-        # Apply Ken Burns
         clip = ken_burns_effect(clip, duration=duration, zoom_ratio=zoom_ratio, pan_range=0.03)
-        # Apply sharpening
         clip = sharpen_frame(clip)
-        # Optional wiggle
         if wiggle:
             clip = add_wiggle(clip)
         clips.append(clip)
@@ -93,5 +102,9 @@ def create_themed_video(image_paths, title_text="✨ Video ✨",
     final = concatenate_videoclips(clips, method="compose", padding=padding)
     final = final.with_effects([vfx.FadeIn(0.5), vfx.FadeOut(0.5)])
 
-    final.write_videofile(output, fps=24, codec="libx264", audio=False)
+    # Use libx264rgb for better color quality
+    final.write_videofile(output, fps=24, codec="libx264rgb", audio=False, preset="medium", bitrate="8000k")
+    
+    if not os.path.exists(output):
+        raise RuntimeError("Video rendering failed – output file not created")
     return output
