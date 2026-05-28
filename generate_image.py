@@ -1,15 +1,15 @@
 import requests
 
-def generate_fashion_images(prompt, seed, width=1080, height=1350):
+def generate_fashion_images(prompt, seed, width=1440, height=1800):
     """
-    High-quality image with consistent character using fixed seed.
-    Adds camera-specific keywords for realism and sharpness.
+    Generate ultra‑sharp images with camera‑specific keywords and increased resolution.
     """
     base_character = (
         "a beautiful Caucasian woman with long wavy brown hair, green eyes, "
         "heart-shaped face, natural makeup, fit toned body, 25 years old, "
-        "shot on iPhone 15 Pro Max, 4k, cinematic, ultra sharp details, "
-        "professional lighting, natural skin texture, highly detailed"
+        "shot on Canon EOS R5, 50mm f/1.4 lens, 8k resolution, ultra HD, "
+        "tack sharp focus, detailed skin texture, professional studio lighting, "
+        "noise-free, high-end commercial photography"
     )
     full_prompt = f"{base_character}, {prompt}"
     encoded = requests.utils.quote(full_prompt)
