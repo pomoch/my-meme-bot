@@ -1,9 +1,10 @@
 import os, requests, random, subprocess, traceback
 import numpy as np
-from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
+from PIL import Image, ImageFilter, ImageDraw, ImageFont
 from generate_image import generate_fashion_images
 from generate_caption import create_caption
 from safety_check import is_safe
+
 # ============================================================
 # THEMES – identical to your previous one, no changes needed
 # ============================================================
@@ -289,116 +290,124 @@ THEMES = {
         ]
     }
 }
-def ultra_6k_sharpen(path):
+def natural_sharpen(path):
     """
-    Upscale to 5760x5760 (6K), then apply aggressive sharpening and save at quality 100.
-    Output: 10-15 MB per image.
+    Apply a very mild unsharp mask to mimic phone camera clarity,
+    then save at 100% quality to get 10-15 MB without artificial look.
     """
     try:
         img = Image.open(path).convert("RGB")
-        # Upscale to 6K using Lanczos
-        img = img.resize((5760, 5760), Image.LANCZOS)
-
-        # Stage 1: Strong unsharp mask (radius 1.0, amount 400%)
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.0, percent=400, threshold=0))
-
-        # Stage 2: High-pass overlay for micro-contrast
-        arr = np.array(img, dtype=np.float32)
-        blurred = np.array(img.filter(ImageFilter.GaussianBlur(radius=8)), dtype=np.float32)
-        high_pass = arr - blurred + 128.0
-        sharpened = np.clip(arr + (high_pass - 128.0) * 0.6, 0, 255).astype(np.uint8)
-        img = Image.fromarray(sharpened)
-
-        # Stage 3: Contrast boost
-        img = ImageEnhance.Contrast(img).enhance(1.15)
-
-        # Stage 4: Saturation boost (HSV)
-        hsv = img.convert("HSV")
-        h, s, v = hsv.split()
-        s = s.point(lambda i: min(255, int(i * 1.2)))
-        img = Image.merge("HSV", (h, s, v)).convert("RGB")
-
-        # Save with maximum quality, no chroma subsampling
+        # Very subtle sharpening (radius=2.0, amount=80%) – barely noticeable
+        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=80, threshold=3))
+        # Save at maximal quality
         img.save(path, quality=100, subsampling=0)
         size_mb = os.path.getsize(path) / (1024*1024)
-        print(f"🔪 6K ultra-sharp: {path} ({size_mb:.1f} MB)")
+        print(f"📱 Phone‑natural sharpened: {path} ({size_mb:.1f} MB)")
     except Exception as e:
-        print(f"⚠️ Sharpening failed for {path}: {e}")
+        print(f"⚠️ Sharpening failed: {e}")
 
-# ================== RELIABLE VIDEO (FFmpeg slideshow + fade) ==================
-def create_slideshow_video(image_paths, title_text, video_style, output):
+# ================== KEN BURNS VIDEO (FFmpeg zoompan) ==================
+def create_kenburns_video(image_paths, title_text, video_style, output):
     """
-    Create a video:
-    1. Title card (2 sec)
-    2. Each image displayed for style-dependant duration
-    3. Fade in at start, fade out at end.
-    No complex crossfade – stable and always works.
+    Build a video with a title card, then each image slowly zoomed/panned.
+    Duration per image: 4 seconds (slow), 3s (medium), 2.5s (fast)
+    Bitrate: 8 Mbps → final video ~25-30 MB.
     """
-    # Title image
-    title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
+    import math
+
+    # Generate title image (same as before)
+    title_img = Image.new("RGB", (1080, 1350), (0,0,0))
     draw = ImageDraw.Draw(title_img)
     try:
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
     except:
         font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), title_text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    draw.text(((1080 - tw)//2, (1350 - th)//2), title_text,
+    bbox = draw.textbbox((0,0), title_text, font=font)
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    draw.text(((1080-tw)//2, (1350-th)//2), title_text,
               fill=(255,255,255), font=font, stroke_width=3, stroke_fill=(0,0,0))
     title_path = "title.png"
     title_img.save(title_path)
 
-    # Durations
+    # Set durations
     if video_style == "fast":
-        img_dur = 1.5
-    elif video_style == "medium":
-        img_dur = 2.0
-    else:
         img_dur = 2.5
+    elif video_style == "medium":
+        img_dur = 3.0
+    else:
+        img_dur = 4.0   # longer for GRWM/vlog/haul
     title_dur = 2.0
-    # Total video duration
-    total_dur = title_dur + len(image_paths) * img_dur
 
-    # Build concat file list (title + images) with durations
-    with open("concat_list.txt", "w") as f:
-        f.write(f"file '{title_path}'\n")
-        f.write(f"duration {title_dur}\n")
-        for img in image_paths:
-            f.write(f"file '{img}'\n")
-            f.write(f"duration {img_dur}\n")
-        # Last image must be listed again without duration
-        f.write(f"file '{image_paths[-1]}'\n")
+    # Build a complex filter that applies zoompan to each input
+    # inputs: title (index 0) then images (1..6)
+    inputs = [title_path] + image_paths
+    filter_parts = []
+    # Title: just scale and pad (no zoom)
+    filter_parts.append(
+        f"[0:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS,trim=duration={title_dur}[v0];"
+    )
+    # For each image, apply zoompan to simulate Ken Burns
+    for i, img_path in enumerate(image_paths):
+        idx = i+1
+        # Zoompan: start zoom=1.0, end zoom=1.1, with slight random pan
+        # x and y expressions: pan slowly from 0 to 0.05*width
+        # We'll use a fixed pan for simplicity, but randomize seed
+        pan_x_end = random.uniform(-0.03, 0.03)  # small horizontal shift
+        pan_y_end = random.uniform(-0.03, 0.03)  # small vertical shift
+        filter_parts.append(
+            f"[{idx}:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+            f"setpts=PTS-STARTPTS,"
+            f"zoompan=z='min(zoom+0.001,1.1)':x='iw/2-(iw/zoom/2)+{pan_x_end}*on':y='ih/2-(ih/zoom/2)+{pan_y_end}*on':d={img_dur*24}:s=1080x1350,"
+            f"trim=duration={img_dur}[v{idx}];"
+        )
+    # Concatenate with crossfade (0.8s fade)
+    filter_parts.append(
+        f"[v0][v1]xfade=transition=fade:duration=0.8:offset={title_dur}[v01];"
+    )
+    prev = "v01"
+    offset = title_dur
+    for i in range(2, len(image_paths)+1):
+        next_label = f"v{i}"
+        offset += img_dur - 0.8  # overlap
+        filter_parts.append(
+            f"[{prev}][{next_label}]xfade=transition=fade:duration=0.8:offset={offset}[{prev}{i}];"
+        )
+        prev = f"{prev}{i}"
+    filter_parts.append(f"[{prev}]format=yuv420p[vout]")
 
-    # First pass: create raw concatenated video
-    temp_raw = "temp_raw.mp4"
-    cmd1 = [
+    filter_complex = "".join(filter_parts)
+
+    # Build input arguments: for each input, set duration with -t
+    input_args = []
+    for i, inp in enumerate(inputs):
+        if i == 0:
+            dur = title_dur
+        else:
+            dur = img_dur
+        input_args.extend(["-loop", "1", "-t", str(dur), "-i", inp])
+
+    cmd = [
         "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", "concat_list.txt",
-        "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "fast", "-crf", "20",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-c:v", "libx264",
+        "-preset", "slow",        # better compression for realistic grain
+        "-crf", "18",             # high quality
+        "-b:v", "8M",            # target bitrate
+        "-maxrate", "10M",
+        "-bufsize", "16M",
         "-r", "24",
-        temp_raw
-    ]
-    subprocess.run(cmd1, check=True)
-
-    # Second pass: apply fade in/out to the whole video
-    fade_cmd = [
-        "ffmpeg", "-y",
-        "-i", temp_raw,
-        "-vf", f"fade=in:0:12,fade=out:{int((total_dur-1)*24)}:12",  # 0.5 sec fade
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "fast", "-crf", "22",
         output
     ]
-    subprocess.run(fade_cmd, check=True)
-    os.remove(temp_raw)
-    print(f"🎬 Video created: {output}")
+    print("🎥 Creating Ken Burns video...")
+    subprocess.run(cmd, check=True)
+    size_mb = os.path.getsize(output) / (1024*1024)
+    print(f"✅ Video ready: {output} ({size_mb:.1f} MB)")
 
 # ================== MAIN ==================
 def main():
-    print("🚀 Starting daily influencer content generation...")
+    print("🚀 Starting daily influencer content...")
     theme_name = random.choice(list(THEMES.keys()))
     theme = THEMES[theme_name]
     print(f"🎭 Theme: {theme_name} – {theme['title']}")
@@ -413,9 +422,9 @@ def main():
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            ultra_6k_sharpen(path)   # 6K upscale + extreme sharpening
+            natural_sharpen(path)   # light, phone‑like sharpening
             image_paths.append(path)
-            print(f"✅ Image {i+1} saved & enhanced")
+            print(f"✅ Image {i+1} saved")
         else:
             print(f"❌ Failed to download image {i+1}")
 
@@ -423,33 +432,30 @@ def main():
         print("Not enough images, aborting.")
         return
 
-    # Safety check
     for img in image_paths:
         if not is_safe(img):
             print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
-    # Create video (reliable slideshow + fade)
     video_output = "daily_video.mp4"
     try:
-        create_slideshow_video(image_paths, theme["title"], theme["video_style"], video_output)
+        create_kenburns_video(image_paths, theme["title"], theme["video_style"], video_output)
     except Exception as e:
-        print(f"❌ Video failed: {e}")
+        print(f"❌ Video error: {e}")
         traceback.print_exc()
         # Fallback black video
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
             "-c:v", "libx264", video_output
         ], check=True)
-        print("⚠️ Fallback black video created.")
+        print("⚠️ Fallback black video.")
 
-    # Caption
     caption = create_caption(theme["caption_context"])
     with open("caption.txt", "w") as f:
         f.write(caption)
     print(f"💬 Caption: {caption}")
 
-    print("📦 Content ready. Email splitting will be handled by send_emails.py.")
+    print("📦 Content ready.")
 
 if __name__ == "__main__":
     main()
