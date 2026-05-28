@@ -2,7 +2,7 @@ name: Daily AI Influencer Content Email
 
 on:
   schedule:
-    - cron: '0 12 * * *'   # every day at 12:00 UTC
+    - cron: '0 12 * * *'
   workflow_dispatch:
 
 jobs:
@@ -17,39 +17,38 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Python dependencies
-        run: pip install requests pillow moviepy "opennsfw2[tf-keras]"
+      - name: Install dependencies
+        run: pip install requests pillow moviepy "opennsfw2[tf-keras]" numpy opencv-python-headless
 
       - name: Generate influencer content
         run: python main.py
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload artifacts (optional)
+        uses: actions/upload-artifact@v6
         with:
           name: daily-influencer-drop
           path: |
-            outfit_1.jpg
-            outfit_2.jpg
-            outfit_3.jpg
-            outfit_video.mp4
+            image_*.jpg
+            daily_video.mp4
             caption.txt
 
-      - name: Send email with generated files
-        uses: dawidd6/action-send-mail@v4
+      - name: Send email with all files
+        uses: dawidd6/action-send-mail@v6
         with:
           server_address: smtp.gmail.com
           server_port: 465
           secure: true
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "✨ Your daily AI influencer drop is ready!"
+          subject: "🎭 Today's AI influencer drop is ready!"
           to: ${{ secrets.EMAIL_TO }}
           from: "AI Influencer Bot"
           body: |
-            Hey! Here's today's fresh content.
+            Hey! Your daily content is ready.
 
-            Caption: ${{ steps.caption.outputs.content }}
-            
-            Attachments: 3 outfit photos + 1 transition video.
-            Post them anywhere you like. 🔥
-          attachments: outfit_1.jpg,outfit_2.jpg,outfit_3.jpg,outfit_video.mp4
+            📸 6 photos in today's random theme.
+            🎬 1 video tailored to the theme (GRWM, dance, vlog, etc.).
+            💬 Caption inside caption.txt
+
+            All files attached – just download and post. 🔥
+          attachments: image_1.jpg,image_2.jpg,image_3.jpg,image_4.jpg,image_5.jpg,image_6.jpg,daily_video.mp4,caption.txt
