@@ -1,14 +1,19 @@
 import requests
 
 def generate_fashion_images(prompt, seed, width=2048, height=2048):
-    base = (
+    """
+    Ask Pollinations for the sharpest possible image.
+    We upscale later, but the base must be incredibly detailed.
+    """
+    base_character = (
         "a beautiful Caucasian woman with long wavy brown hair, green eyes, "
         "heart-shaped face, natural makeup, fit toned body, 25 years old, "
-        "shot on Hasselblad X2D 100C, 100 megapixel, f/1.4, tack-sharp focus, "
-        "ultra high definition, professional lighting, skin texture visible, "
-        "noise-free, editorial fashion photography, vibrant colors, 2026 standards"
+        "photographed with a Hasselblad H6D-100c, 100 megapixels, f/1.4, "
+        "tack‑sharp focus, ultra high definition, intricate skin texture, "
+        "every eyelash visible, professional studio lighting, noise‑free, "
+        "hyper‑realistic, vibrant colors, editorial fashion photography, 2026 aesthetic"
     )
-    full_prompt = f"{base}, {prompt}"
+    full_prompt = f"{base_character}, {prompt}"
     encoded = requests.utils.quote(full_prompt)
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
