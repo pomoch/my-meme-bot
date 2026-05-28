@@ -1,10 +1,18 @@
-import smtplib, os, math
+import smtplib, os
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 
-MAX_EMAIL_SIZE_MB = 20   # Stay well under Gmail's 25 MB limit
+MAX_EMAIL_SIZE_MB = 20   # under Gmail's 25 MB limit
+
+def safe_getsize(filepath):
+    """Return file size in bytes, or 0 if file does not exist."""
+    if os.path.exists(filepath):
+        return os.path.getsize(filepath)
+    else:
+        print(f"⚠️ File not found (skipping): {filepath}")
+        return 0
 
 def send_email(attachments, subject, body):
     username = os.getenv("EMAIL_USERNAME")
@@ -19,9 +27,9 @@ def send_email(attachments, subject, body):
     
     total_size = 0
     for filepath in attachments:
-        if not os.path.exists(filepath):
-            print(f"⚠️ File missing: {filepath}, skipping.")
-            continue
+        size = safe_getsize(filepath)
+        if size == 0:
+            continue   # skip missing files
         with open(filepath, "rb") as f:
             data = f.read()
         total_size += len(data)
@@ -47,31 +55,40 @@ def main():
     video_file = "daily_video.mp4"
     caption_file = "caption.txt"
     
-    # Always include caption in every email (tiny)
-    base_attachments = [caption_file]
-    # Group images into batches such that total size per email < MAX_EMAIL_SIZE_MB
-    # Compute sizes
+    # Always include caption only if it exists
+    base_attachments = [caption_file] if os.path.exists(caption_file) else []
+    
+    # Compute sizes for existing files
     file_sizes = {}
     for f in image_files + [video_file]:
-        if os.path.exists(f):
-            file_sizes[f] = os.path.getsize(f)
+        size = safe_getsize(f)
+        if size > 0:
+            file_sizes[f] = size
     
-    # Send video + caption in first email (video usually ~5-10 MB)
-    video_batch = [video_file] + base_attachments
-    video_size = file_sizes.get(video_file, 0) + os.path.getsize(caption_file)
-    if video_size < MAX_EMAIL_SIZE_MB * 1024 * 1024:
-        send_email(video_batch, "🎬 Today's AI influencer video + caption", "Your daily video and caption are attached!")
+    # Send video + caption (if video exists)
+    video_attachments = []
+    if os.path.exists(video_file):
+        video_attachments.append(video_file)
+    video_attachments.extend(base_attachments)
+    video_size = sum(file_sizes.get(f, 0) for f in video_attachments)
+    if video_attachments and video_size < MAX_EMAIL_SIZE_MB * 1024 * 1024:
+        send_email(video_attachments, "🎬 Today's AI influencer video + caption", "Your daily video and caption are attached!")
+    elif os.path.exists(video_file):
+        print("⚠️ Video too large, sending without attachment (download from artifacts).")
+        send_email(base_attachments, "🎬 Video ready (download in artifacts)", "Video was too large for email. Download from GitHub Actions artifacts.")
     else:
-        print("⚠️ Video too large, sending without attachment (you can download from artifacts).")
-        send_email(base_attachments, "🎬 Video ready (download link in artifacts)", "Video was too large for email. Download from GitHub Actions artifacts.")
+        print("⚠️ No video file found; skipping video email.")
     
-    # Now split images into groups that fit under 20 MB
+    # Split images into batches that fit under 20 MB
+    if not image_files:
+        print("⚠️ No image files found.")
+        return
+    
     current_batch = []
     current_size = 0
     batch_num = 1
     for img in image_files:
         img_size = file_sizes.get(img, 0)
-        # If adding this image would exceed limit, send current batch and start new one
         if current_size + img_size > MAX_EMAIL_SIZE_MB * 1024 * 1024 and current_batch:
             attachments = current_batch + base_attachments
             send_email(attachments, f"📸 AI influencer photos (part {batch_num})", "Ultra‑sharp 6K images attached!")
