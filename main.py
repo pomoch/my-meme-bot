@@ -1,14 +1,9 @@
-import os
-import requests
-import random
-import traceback
+import os, requests, random, traceback, subprocess, tempfile
 import numpy as np
 from PIL import Image, ImageFilter, ImageEnhance
 from generate_image import generate_fashion_images
-from generate_video import create_themed_video
 from generate_caption import create_caption
 from safety_check import is_safe
-
 # ============================================================
 # THEMES – identical to your previous one, no changes needed
 # ============================================================
@@ -294,43 +289,97 @@ THEMES = {
         ]
     }
 }
-
-# ============================================================
-# ULTRA SHARPEN – multi-stage professional pipeline
-# ============================================================
-def ultra_sharpen(path):
+def ultra_sharpen_and_pop(path):
     try:
         img = Image.open(path).convert("RGB")
-        # Stage 1: AI-like unsharp mask (radius 1.5, amount 250%)
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=250, threshold=2))
-        # Stage 2: High-pass overlay for fine detail
+        # Stage 1: Strong unsharp mask
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.3, percent=300, threshold=0))
+        # Stage 2: High-pass sharpening
         arr = np.array(img, dtype=np.float32)
-        blurred = np.array(img.filter(ImageFilter.GaussianBlur(radius=20)), dtype=np.float32)
+        blurred = np.array(img.filter(ImageFilter.GaussianBlur(radius=15)), dtype=np.float32)
         high_pass = arr - blurred + 128.0
-        # Blend 35% high-pass
-        sharpened = np.clip(arr + (high_pass - 128.0) * 0.35, 0, 255).astype(np.uint8)
+        sharpened = np.clip(arr + (high_pass - 128.0) * 0.5, 0, 255).astype(np.uint8)
         img = Image.fromarray(sharpened)
-        # Stage 3: Micro-contrast enhancement
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(1.08)
-        # Save at maximum quality
+        # Stage 3: Contrast boost
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+        # Stage 4: Saturation / vibrance (subtle)
+        # Convert to HSV, boost saturation channel
+        hsv = img.convert("HSV")
+        h, s, v = hsv.split()
+        s = s.point(lambda i: min(255, int(i * 1.2)))  # +20% saturation
+        img = Image.merge("HSV", (h, s, v)).convert("RGB")
+        # Final save at 100% quality
         img.save(path, quality=100, subsampling=0)
-        print(f"🔪 Ultra-sharpened {path}")
+        print(f"🔪 Ultra-sharpened & color‑boosted {path}")
     except Exception as e:
-        print(f"⚠️ Sharpening failed for {path}: {e}")
+        print(f"⚠️ Could not sharpen {path}: {e}")
+
+# ---------- FFMPEG VIDEO BUILDER (no MoviePy!) ----------
+def create_video_ffmpeg(image_paths, title_text, video_style, output):
+    """
+    Build a video with a title card + images, crossfade transitions, using FFmpeg.
+    - Creates a title image with PIL, then appends the images.
+    - Uses a concat filter with xfade for smooth transitions.
+    - Duration per image: fast=1.5s, medium=2.0s, slow=2.5s (title always 2s)
+    """
+    # Generate title image
+    title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
+    from PIL import ImageDraw, ImageFont
+    draw = ImageDraw.Draw(title_img)
+    # Try to load a font, else default
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
+    except:
+        font = ImageFont.load_default()
+    # Wrap text? simple center
+    bbox = draw.textbbox((0, 0), title_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    position = ((1080 - text_width) // 2, (1350 - text_height) // 2)
+    draw.text(position, title_text, fill=(255, 255, 255), font=font, stroke_width=3, stroke_fill=(0, 0, 0))
+    title_path = "title.png"
+    title_img.save(title_path)
+
+    # Build input list with durations
+    # Format: file 'path'\nduration X\n
+    with open("concat_list.txt", "w") as f:
+        f.write(f"file '{title_path}'\n")
+        f.write("duration 2\n")
+        for img in image_paths:
+            f.write(f"file '{img}'\n")
+            if video_style == "fast":
+                f.write("duration 1.5\n")
+            elif video_style == "medium":
+                f.write("duration 2.0\n")
+            else:
+                f.write("duration 2.5\n")
+        # Last image needs no duration after (or repeat last file)
+        # ffmpeg concat demuxer requires last line to be the last file again without duration
+        f.write(f"file '{image_paths[-1]}'\n")
+
+    # FFmpeg command
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", "concat_list.txt",
+        "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-preset", "fast", "-crf", "23",
+        "-r", "24",
+        output
+    ]
+    print("🎬 Running FFmpeg...")
+    subprocess.run(cmd, check=True)
+    print("✅ FFmpeg finished.")
 
 def main():
     print("🚀 Starting daily influencer content generation...")
-
-    # Pick random theme
     theme_name = random.choice(list(THEMES.keys()))
     theme = THEMES[theme_name]
     print(f"🎭 Theme: {theme_name} – {theme['title']}")
 
     daily_seed = random.randint(1, 100000)
-
-    # Generate and sharpen 6 images
     image_paths = []
+
     for i, prompt in enumerate(theme["scenes"]):
         url = generate_fashion_images(prompt, seed=daily_seed, width=2048, height=2048)
         resp = requests.get(url)
@@ -338,70 +387,49 @@ def main():
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            ultra_sharpen(path)
+            ultra_sharpen_and_pop(path)
             image_paths.append(path)
-            print(f"✅ Image {i+1} saved & sharpened")
+            print(f"✅ Image {i+1} saved & enhanced")
         else:
             print(f"❌ Failed to download image {i+1}")
 
     if len(image_paths) < 6:
-        print("❌ Not enough images. Aborting.")
+        print("Not enough images, aborting.")
         return
 
     # Safety check
     for img in image_paths:
         if not is_safe(img):
-            print(f"⚠️ Unsafe content in {img}. Aborting.")
+            print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
-    # Video generation – guaranteed to work
-    video_path = "daily_video.mp4"
+    # Video creation via FFmpeg (guaranteed)
+    video_output = "daily_video.mp4"
     try:
-        create_themed_video(
-            image_paths,
-            title_text=theme["title"],
-            video_style=theme["video_style"],
-            wiggle=theme["wiggle"],
-            output=video_path
-        )
-        if os.path.exists(video_path):
-            print(f"🎬 Video created: {video_path}")
-        else:
-            # Fallback: create a simple MP4 with ffmpeg directly if MoviePy failed
-            print("⚠️ Video file missing after MoviePy. Creating fallback video.")
-            import subprocess
-            # Use ffmpeg to concatenate images into a video
-            with open("input_list.txt", "w") as f:
-                for img in image_paths:
-                    f.write(f"file '{img}'\n")
-                    f.write("duration 2\n")
+        create_video_ffmpeg(image_paths, theme["title"], theme["video_style"], video_output)
+        if not os.path.exists(video_output):
+            # Fallback: a simple black video
             subprocess.run([
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "input_list.txt",
-                "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "24", video_path
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
+                "-c:v", "libx264", video_output
             ], check=True)
-            print("✅ Fallback video created via ffmpeg.")
     except Exception as e:
-        print(f"❌ Video generation error: {e}")
+        print(f"❌ FFmpeg failed: {e}")
         traceback.print_exc()
-        # Last resort: create a 1-second black video
-        try:
-            import subprocess
-            subprocess.run([
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=1",
-                "-c:v", "libx264", video_path
-            ], check=True)
-            print("⚠️ Created black placeholder video.")
-        except:
-            print("❌ Completely unable to create video.")
+        # Last resort: create a black placeholder
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
+            "-c:v", "libx264", video_output
+        ], check=True)
+        print("⚠️ Created placeholder video.")
 
-    # Caption – always produced
+    # Caption (always present)
     caption = create_caption(theme["caption_context"])
     with open("caption.txt", "w") as f:
         f.write(caption)
     print(f"💬 Caption: {caption}")
 
-    print("📦 All content ready.")
+    print("📦 All content ready for email delivery.")
 
 if __name__ == "__main__":
     main()
