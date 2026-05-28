@@ -32,7 +32,7 @@ jobs:
             daily_video.mp4
             caption.txt
 
-      - name: Send email with all files
+            - name: Send email with generated files
         uses: dawidd6/action-send-mail@v17
         with:
           server_address: smtp.gmail.com
@@ -42,7 +42,7 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "🎭 Today's AI influencer drop is ready!"
           to: ${{ secrets.EMAIL_TO }}
-          from: "AI Influencer Bot"
+          from: "AI Influencer Bot <${{ secrets.EMAIL_USERNAME }}>"
           body: |
             Hey! Your daily content is ready.
 
