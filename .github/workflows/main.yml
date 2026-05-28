@@ -18,12 +18,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pillow moviepy "opennsfw2[tf-keras]" numpy opencv-python-headless
+        run: pip install requests pillow "opennsfw2[tf-keras]"
 
       - name: Generate influencer content
         run: python main.py
 
-      - name: Upload artifacts (optional backup)
+      - name: Upload artifacts (backup)
         uses: actions/upload-artifact@v6
         with:
           name: daily-influencer-drop
@@ -32,7 +32,7 @@ jobs:
             daily_video.mp4
             caption.txt
 
-      - name: Send email with generated files
+      - name: Send email with all files
         uses: dawidd6/action-send-mail@v17
         with:
           server_address: smtp.gmail.com
@@ -46,8 +46,8 @@ jobs:
           body: |
             Hey! Your daily content is ready.
 
-            📸 6 photos in today's random theme.
-            🎬 1 video tailored to the theme (GRWM, dance, vlog, etc.).
+            📸 6 ultra‑sharp photos
+            🎬 1 polished video
             💬 Caption inside caption.txt
 
             All files attached – just download and post. 🔥
