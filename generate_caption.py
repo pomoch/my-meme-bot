@@ -59,7 +59,6 @@ FALLBACK_CAPTIONS = [
 ]
 
 def create_caption(context):
-    # Try the free text API
     prompt = (
         f"Write a short, engaging Instagram caption for an AI influencer. "
         f"Context: {context}. Keep under 200 characters. Use emojis. Sound natural and flirty."
@@ -72,5 +71,4 @@ def create_caption(context):
             return resp.text.strip()
     except:
         pass
-    # Fallback
     return random.choice(FALLBACK_CAPTIONS)
