@@ -1,36 +1,51 @@
 import requests
+import os
+import base64
 
-def post_to_instagram(image_path, caption, access_token, ig_user_id):
+def post_to_social(caption, image_path, video_path=None):
     """
-    Post a single image to Instagram using the Graph API.
-    Requires a public URL for the image; we'll use a free temporary upload.
+    Post to ALL linked social platforms via Ayrshare.
+    Automatically distributes to Instagram, TikTok, X, Facebook, LinkedIn,
+    Pinterest, Reddit, YouTube, etc. – whatever you've linked in your dashboard.
     """
-    # Step 1: Upload the image to a temporary hosting (we'll use 0x0.st, free and direct)
-    with open(image_path, 'rb') as f:
-        upload_resp = requests.post('https://0x0.st', files={'file': f})
-    if upload_resp.status_code != 200:
-        return {"error": "Image upload failed", "details": upload_resp.text}
-    image_url = upload_resp.text.strip()
-    print(f"📤 Image uploaded to {image_url}")
+    api_key = os.getenv("AYRSHARE_API_KEY")
+    if not api_key:
+        print("⚠️ AYRSHARE_API_KEY not found.")
+        return
 
-    # Step 2: Create a media container
-    container_url = f"https://graph.facebook.com/v19.0/{ig_user_id}/media"
-    params = {
-        "image_url": image_url,
-        "caption": caption,
-        "access_token": access_token
+    url = "https://app.ayrshare.com/api/post"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-    resp = requests.post(container_url, data=params)
-    if resp.status_code != 200:
-        return {"error": "Media container creation failed", "details": resp.json()}
-    container_id = resp.json().get("id")
-    print(f"📦 Container ID: {container_id}")
 
-    # Step 3: Publish the container
-    publish_url = f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish"
-    publish_params = {
-        "creation_id": container_id,
-        "access_token": access_token
+    # Convert image to base64 data URI
+    with open(image_path, "rb") as img_file:
+        image_b64 = base64.b64encode(img_file.read()).decode("utf-8")
+    image_data_uri = f"data:image/jpeg;base64,{image_b64}"
+
+    payload = {
+        "post": caption,
+        "platforms": ["instagram", "tiktok", "x", "facebook", "linkedin",
+                      "pinterest", "reddit", "youtube"],
+        "mediaUrls": [image_data_uri]
     }
-    publish_resp = requests.post(publish_url, data=publish_params)
-    return publish_resp.json()
+
+    # If video exists, replace media with video and add optional thumbnail
+    if video_path:
+        with open(video_path, "rb") as vid_file:
+            video_b64 = base64.b64encode(vid_file.read()).decode("utf-8")
+        video_data_uri = f"data:video/mp4;base64,{video_b64}"
+        payload["mediaUrls"] = [video_data_uri]
+        # Optionally set a custom thumbnail (the first outfit image)
+        payload["thumbNail"] = image_data_uri
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            print("✅ Successfully posted to all selected platforms!")
+            print(response.json())
+        else:
+            print(f"❌ Ayrshare API Error: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"❌ Failed to send post: {e}")
