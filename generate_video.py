@@ -7,7 +7,6 @@ import random
 import cv2
 
 def ken_burns_effect(clip, duration=3.0, zoom_ratio=0.04, pan_range=0.05):
-    """Slow zoom and pan."""
     w, h = clip.size
     x_shift = int(w * pan_range * (random.random() - 0.5))
     y_shift = int(h * pan_range * (random.random() - 0.5))
@@ -25,7 +24,6 @@ def ken_burns_effect(clip, duration=3.0, zoom_ratio=0.04, pan_range=0.05):
     return clip.transform(make_frame, duration=duration)
 
 def add_wiggle(clip):
-    """Add a rapid horizontal shake to clip, simulating dance energy."""
     def wiggle_frame(t):
         frame = clip.get_frame(t)
         shift = int(10 * np.sin(2 * np.pi * 3 * t))
@@ -33,22 +31,35 @@ def add_wiggle(clip):
         return cv2.warpAffine(frame, M, (clip.w, clip.h))
     return clip.transform(wiggle_frame)
 
+def sharpen_frame(clip):
+    """
+    Apply a sharpening kernel to every frame using OpenCV.
+    Kernel: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]]
+    This is a classic sharpening filter.
+    """
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5, -1],
+                       [0, -1, 0]], dtype=np.float32)
+    def make_sharp(t):
+        frame = clip.get_frame(t)
+        # frame is RGB, convert to BGR for OpenCV then back
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        sharpened_bgr = cv2.filter2D(frame_bgr, -1, kernel)
+        sharpened_rgb = cv2.cvtColor(sharpened_bgr, cv2.COLOR_BGR2RGB)
+        return sharpened_rgb
+    return clip.transform(make_sharp)
+
 def create_themed_video(image_paths, title_text="✨ Video ✨",
                         video_style="slow", wiggle=False,
                         output="daily_video.mp4"):
-    """
-    Build a video with a title card and theme-appropriate pacing.
-    video_style: "slow" (2.5s, gentle zoom), "medium" (2.0s), "fast" (1.5s)
-    wiggle: adds dance shake (only used with "dance" etc.)
-    """
-    # Determine duration and zoom based on style
+    # Duration and zoom based on style
     if video_style == "fast":
         duration = 1.5
         zoom_ratio = 0.02
     elif video_style == "medium":
         duration = 2.0
         zoom_ratio = 0.03
-    else:  # slow
+    else:
         duration = 2.5
         zoom_ratio = 0.04
 
@@ -69,12 +80,15 @@ def create_themed_video(image_paths, title_text="✨ Video ✨",
 
     for img_path in image_paths:
         clip = ImageClip(img_path).resized((1080, 1350))
+        # Apply Ken Burns
         clip = ken_burns_effect(clip, duration=duration, zoom_ratio=zoom_ratio, pan_range=0.03)
+        # Apply sharpening
+        clip = sharpen_frame(clip)
+        # Optional wiggle
         if wiggle:
             clip = add_wiggle(clip)
         clips.append(clip)
 
-    # Crossfade padding
     padding = -0.8 if video_style == "fast" else -1.0
     final = concatenate_videoclips(clips, method="compose", padding=padding)
     final = final.with_effects([vfx.FadeIn(0.5), vfx.FadeOut(0.5)])
