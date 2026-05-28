@@ -4,7 +4,6 @@ from generate_image import generate_fashion_images
 from generate_video import create_transition_video
 from generate_caption import create_caption
 from safety_check import is_safe
-from post_to_social import post_to_social
 
 def main():
     print("🚀 Starting daily AI influencer content generation...")
@@ -41,20 +40,17 @@ def main():
             return
 
     # 3. Create a short video (slideshow with fade)
-    #    We still generate it, but we won't send it on the free plan.
     video_path = create_transition_video(images, output="outfit_video.mp4")
     print(f"🎬 Video created: {video_path}")
 
-    # 4. Generate a caption
+    # 4. Generate a caption (just for info, we'll include it in the email body)
     caption = create_caption("A day of outfit changes from brunch to dinner")
-    print(f"💬 Caption: {caption}")
+    with open("caption.txt", "w") as f:
+        f.write(caption)
+    print(f"💬 Caption saved: {caption}")
 
-    # 5. Post to all linked social media via Ayrshare
-    #    IMPORTANT: video_path set to None because free plan only allows images.
-    if os.getenv("AYRSHARE_API_KEY"):
-        post_to_social(caption, images[0], video_path=None)
-    else:
-        print("⚠️ AYRSHARE_API_KEY not set, skipping social posts.")
+    # All files (outfit_1.jpg, outfit_2.jpg, outfit_3.jpg, outfit_video.mp4, caption.txt)
+    # will be available for the next step (email).
 
 if __name__ == "__main__":
     main()
