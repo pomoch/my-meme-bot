@@ -41,6 +41,7 @@ def main():
             return
 
     # 3. Create a short video (slideshow with fade)
+    #    We still generate it, but we won't send it on the free plan.
     video_path = create_transition_video(images, output="outfit_video.mp4")
     print(f"🎬 Video created: {video_path}")
 
@@ -49,8 +50,9 @@ def main():
     print(f"💬 Caption: {caption}")
 
     # 5. Post to all linked social media via Ayrshare
+    #    IMPORTANT: video_path set to None because free plan only allows images.
     if os.getenv("AYRSHARE_API_KEY"):
-        post_to_social(caption, images[0], video_path)
+        post_to_social(caption, images[0], video_path=None)
     else:
         print("⚠️ AYRSHARE_API_KEY not set, skipping social posts.")
 
