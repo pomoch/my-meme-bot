@@ -1,7 +1,8 @@
 import os
 import requests
 import random
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
+import numpy as np
 from generate_image import generate_fashion_images
 from generate_video import create_themed_video
 from generate_caption import create_caption
@@ -290,40 +291,53 @@ THEMES = {
     }
 }
 
-def sharpen_image(path):
-    """Apply unsharp mask to make the image look like it was shot on a premium camera."""
+
+def extreme_sharpen(path):
+    """
+    Apply a two‑stage sharpening process:
+    1. Strong unsharp mask
+    2. High‑pass overlay for micro‑contrast
+    """
     try:
         img = Image.open(path).convert("RGB")
-        sharpened = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=0))
-        sharpened.save(path, quality=95)
-        print(f"🔪 Sharpened {path}")
+        # Stage 1: Unsharp mask (radius=1.5, amount=200%)
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=200, threshold=0))
+        # Stage 2: High‑pass sharpening
+        # Create a blurred version, subtract, and blend
+        blurred = img.filter(ImageFilter.GaussianBlur(radius=10))
+        # Convert to numpy arrays
+        arr_img = np.array(img, dtype=np.float32)
+        arr_blur = np.array(blurred, dtype=np.float32)
+        high_pass = arr_img - arr_blur + 128  # normalize
+        # Blend high_pass with original (opacity 0.3)
+        sharpened = np.clip(arr_img + (high_pass - 128) * 0.3, 0, 255).astype(np.uint8)
+        final_img = Image.fromarray(sharpened)
+        # Boost contrast slightly
+        enhancer = ImageEnhance.Contrast(final_img)
+        final_img = enhancer.enhance(1.05)
+        final_img.save(path, quality=100)
+        print(f"🔪 Extreme sharpened {path}")
     except Exception as e:
         print(f"⚠️ Could not sharpen {path}: {e}")
 
 def main():
     print("🚀 Starting daily influencer content generation...")
 
-    # 1. Randomly pick a theme
     theme_name = random.choice(list(THEMES.keys()))
     theme = THEMES[theme_name]
     print(f"🎭 Today's theme: {theme_name} ({theme['title']})")
 
-    # Fixed seed for character consistency today
     daily_seed = random.randint(1, 100000)
-
-    # 2. Generate all 6 images
     image_paths = []
+
     for i, scene_prompt in enumerate(theme["scenes"]):
-        url = generate_fashion_images(
-            scene_prompt, seed=daily_seed,
-            width=1080, height=1350
-        )
+        url = generate_fashion_images(scene_prompt, seed=daily_seed, width=1440, height=1800)
         resp = requests.get(url)
         if resp.status_code == 200:
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            sharpen_image(path)  # <-- sharpen after save
+            extreme_sharpen(path)
             image_paths.append(path)
             print(f"✅ Image {i+1} generated and sharpened")
         else:
@@ -333,27 +347,40 @@ def main():
         print("Not enough images, aborting.")
         return
 
-    # 3. Safety check
+    # Safety check
     for img in image_paths:
         if not is_safe(img):
             print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
-    # 4. Create video with theme-specific style
-    video_path = create_themed_video(
-        image_paths,
-        title_text=theme["title"],
-        video_style=theme["video_style"],
-        wiggle=theme["wiggle"],
-        output="daily_video.mp4"
-    )
-    print(f"🎬 Video created: {video_path}")
+    # Video generation with error handling
+    video_path = None
+    try:
+        video_path = create_themed_video(
+            image_paths,
+            title_text=theme["title"],
+            video_style=theme["video_style"],
+            wiggle=theme["wiggle"],
+            output="daily_video.mp4"
+        )
+        if os.path.exists(video_path):
+            print(f"🎬 Video created successfully: {video_path}")
+        else:
+            print("❌ Video file not found after generation.")
+    except Exception as e:
+        print(f"❌ Video generation failed: {e}")
+        import traceback
+        traceback.print_exc()
 
-    # 5. Generate caption
-    caption = create_caption(theme["caption_context"])
+    # Caption generation with fallback
+    try:
+        caption = create_caption(theme["caption_context"])
+    except Exception as e:
+        print(f"⚠️ Caption generation failed: {e}")
+        caption = "New day, new vibes ✨"
     with open("caption.txt", "w") as f:
         f.write(caption)
-    print(f"💬 Caption: {caption}")
+    print(f"💬 Caption saved: {caption}")
 
     print("📦 Content ready for email delivery.")
 
