@@ -26,7 +26,14 @@ jobs:
       - name: Generate influencer content
         run: python main.py
 
-      - name: Upload artifacts (full‑quality backup)
+      - name: Send emails with attachments (smart split)
+        env:
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python send_emails.py
+
+      - name: Upload artifacts (full original backups)
         uses: actions/upload-artifact@v6
         with:
           name: daily-influencer-drop
@@ -34,24 +41,3 @@ jobs:
             image_*.jpg
             daily_video.mp4
             caption.txt
-
-      - name: Send email with compressed attachments
-        uses: dawidd6/action-send-mail@v17
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "🎭 Today's AI influencer drop is ready!"
-          to: ${{ secrets.EMAIL_TO }}
-          from: "AI Influencer Bot <${{ secrets.EMAIL_USERNAME }}>"
-          body: |
-            Hey! Your daily content is ready.
-
-            📸 6 ultra‑sharp 4K photos
-            🎬 1 cinematic crossfade video
-            💬 Caption inside caption.txt
-
-            (Full‑resolution originals are in the GitHub Artifacts if email files are too large.)
-          attachments: image_1.jpg,image_2.jpg,image_3.jpg,image_4.jpg,image_5.jpg,image_6.jpg,daily_video.mp4,caption.txt
