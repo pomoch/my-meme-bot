@@ -1,12 +1,16 @@
 import requests
 
 def generate_fashion_images(prompt, seed, width=2048, height=2048):
+    """
+    Generate an image that looks like it was taken with a phone –
+    casual, realistic, no studio perfection.
+    """
     base_character = (
-        "a beautiful Caucasian woman with long wavy brown hair, green eyes, "
-        "heart-shaped face, natural makeup, fit toned body, 25 years old, "
-        "photographed with a Phase One IQ4 150MP, f/1.4, extreme sharpness, "
-        "every pore visible, hyper‑realistic, 8K texture, professional lighting, "
-        "noise‑free, vibrant colors, editorial fashion, 2026 aesthetic"
+        "a candid iPhone 15 Pro Max selfie of a beautiful 25-year-old Caucasian woman, "
+        "long wavy brown hair, green eyes, natural makeup, soft smile, "
+        "natural window light, slight skin texture, visible pores, not airbrushed, "
+        "casual clothing, messy bun, phone camera quality, slight motion blur, "
+        "real life, unedited, instagram story style, 2025"
     )
     full_prompt = f"{base_character}, {prompt}"
     encoded = requests.utils.quote(full_prompt)
