@@ -1,7 +1,7 @@
 import requests
 
 def create_caption(scene_description):
-    """Generate a short Instagram-style caption using Pollinations text API (free, no key)."""
+    """Free caption generation via Pollinations text API."""
     prompt = (
         f"Write a short, engaging Instagram-style caption for a fashionable AI influencer. "
         f"Scene: {scene_description}. "
