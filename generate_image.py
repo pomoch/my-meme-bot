@@ -1,16 +1,25 @@
 import requests
+import random
 
-def generate_fashion_images(prompt, seed, width=2048, height=2048):
+def generate_fashion_images(prompt, seed, width=2048, height=2730):
     """
-    Generate an image that looks like it was taken with a phone –
-    casual, realistic, no studio perfection.
+    Generate a 3:4 portrait that looks like a real phone photo.
+    Add a random shot type to the prompt for natural variety.
     """
+    # Randomly choose shot type for natural variety
+    shot_types = [
+        "full body shot, standing, looking at camera",
+        "half body shot, from waist up, candid",
+        "close-up selfie, face filling the frame, slight smile"
+    ]
+    shot_type = random.choice(shot_types)
+
     base_character = (
-        "a candid iPhone 15 Pro Max selfie of a beautiful 25-year-old Caucasian woman, "
-        "long wavy brown hair, green eyes, natural makeup, soft smile, "
-        "natural window light, slight skin texture, visible pores, not airbrushed, "
-        "casual clothing, messy bun, phone camera quality, slight motion blur, "
-        "real life, unedited, instagram story style, 2025"
+        f"a beautiful 25-year-old Caucasian woman with long wavy brown hair and green eyes, "
+        f"natural makeup, soft skin texture, visible pores, not airbrushed, "
+        f"photographed with an iPhone 15 Pro Max, natural window light, "
+        f"casual clothing, messy bun, {shot_type}, "
+        f"real life, unedited, instagram story style, sharp details"
     )
     full_prompt = f"{base_character}, {prompt}"
     encoded = requests.utils.quote(full_prompt)
