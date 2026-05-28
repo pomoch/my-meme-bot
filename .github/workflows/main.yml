@@ -1,26 +1,44 @@
-name: Daily AI Influencer Post
+name: Daily AI Influencer Content Email
 
 on:
   schedule:
-    - cron: '0 12 * * *'   # runs every day at 12:00 UTC
-  workflow_dispatch:        # lets you trigger manually
+    - cron: '0 12 * * *'   # every day at 12:00 UTC
+  workflow_dispatch:
 
 jobs:
-  run:
+  build-and-send:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install requests pillow moviepy "opennsfw2[tf-keras]"
 
-      - name: Run influencer script
-        env:
-          AYRSHARE_API_KEY: ${{ secrets.AYRSHARE_API_KEY }}
+      - name: Generate influencer content
         run: python main.py
+
+      - name: Send email with generated files
+        uses: dawidd6/action-send-mail@v4
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✨ Your daily AI influencer drop is ready!"
+          to: ${{ secrets.EMAIL_TO }}
+          from: "AI Influencer Bot"
+          body: |
+            Hey! Here's today's fresh content.
+
+            Caption: ${{ steps.caption.outputs.content }}
+            
+            Attachments: 3 outfit photos + 1 transition video.
+            Post them anywhere you like. 🔥
+          attachments: outfit_1.jpg,outfit_2.jpg,outfit_3.jpg,outfit_video.mp4
