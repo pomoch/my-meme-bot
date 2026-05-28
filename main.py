@@ -1,9 +1,10 @@
-import os, requests, random, traceback, subprocess, tempfile
+import os, requests, random, subprocess, traceback
 import numpy as np
-from PIL import Image, ImageFilter, ImageEnhance
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
 from generate_image import generate_fashion_images
 from generate_caption import create_caption
 from safety_check import is_safe
+
 # ============================================================
 # THEMES – identical to your previous one, no changes needed
 # ============================================================
@@ -289,88 +290,128 @@ THEMES = {
         ]
     }
 }
-def ultra_sharpen_and_pop(path):
+def upscale_and_sharpen(path):
+    """
+    Upscale to 3840x3840 (true 4K) using Lanczos,
+    then apply a 4‑stage sharpening pipeline for crystal clarity.
+    File size will be 3‑5 MB at quality=95.
+    """
     try:
         img = Image.open(path).convert("RGB")
+        # Upscale to 3840x3840 (Lanczos is the best quality)
+        img = img.resize((3840, 3840), Image.LANCZOS)
+
         # Stage 1: Strong unsharp mask
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.3, percent=300, threshold=0))
-        # Stage 2: High-pass sharpening
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=250, threshold=0))
+
+        # Stage 2: High‑pass overlay (micro‑contrast)
         arr = np.array(img, dtype=np.float32)
-        blurred = np.array(img.filter(ImageFilter.GaussianBlur(radius=15)), dtype=np.float32)
+        blurred = np.array(img.filter(ImageFilter.GaussianBlur(radius=10)), dtype=np.float32)
         high_pass = arr - blurred + 128.0
-        sharpened = np.clip(arr + (high_pass - 128.0) * 0.5, 0, 255).astype(np.uint8)
+        sharpened = np.clip(arr + (high_pass - 128.0) * 0.45, 0, 255).astype(np.uint8)
         img = Image.fromarray(sharpened)
+
         # Stage 3: Contrast boost
-        img = ImageEnhance.Contrast(img).enhance(1.15)
-        # Stage 4: Saturation / vibrance (subtle)
-        # Convert to HSV, boost saturation channel
+        img = ImageEnhance.Contrast(img).enhance(1.1)
+
+        # Stage 4: Subtle saturation increase (in HSV)
         hsv = img.convert("HSV")
         h, s, v = hsv.split()
-        s = s.point(lambda i: min(255, int(i * 1.2)))  # +20% saturation
+        s = s.point(lambda i: min(255, int(i * 1.15)))
         img = Image.merge("HSV", (h, s, v)).convert("RGB")
-        # Final save at 100% quality
-        img.save(path, quality=100, subsampling=0)
-        print(f"🔪 Ultra-sharpened & color‑boosted {path}")
-    except Exception as e:
-        print(f"⚠️ Could not sharpen {path}: {e}")
 
-# ---------- FFMPEG VIDEO BUILDER (no MoviePy!) ----------
-def create_video_ffmpeg(image_paths, title_text, video_style, output):
+        # Save with maximal JPEG quality, no chroma subsampling
+        img.save(path, quality=95, subsampling=0)
+        size_mb = os.path.getsize(path) / (1024*1024)
+        print(f"🔪 4K upscaled & sharpened: {path} ({size_mb:.1f} MB)")
+    except Exception as e:
+        print(f"⚠️ Could not upscale/sharpen {path}: {e}")
+
+# ================== FFMPEG CROSSFADE VIDEO ==================
+def create_crossfade_video(image_paths, title_text, video_style, output):
     """
-    Build a video with a title card + images, crossfade transitions, using FFmpeg.
-    - Creates a title image with PIL, then appends the images.
-    - Uses a concat filter with xfade for smooth transitions.
-    - Duration per image: fast=1.5s, medium=2.0s, slow=2.5s (title always 2s)
+    Create a video with:
+    - A title image (2 seconds)
+    - Images with crossfade transitions
+    Duration per image: fast=1.5s, medium=2.0s, slow=2.5s
     """
-    # Generate title image
+    # 1. Generate title image (1080x1350, black bg, white text)
     title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
-    from PIL import ImageDraw, ImageFont
     draw = ImageDraw.Draw(title_img)
-    # Try to load a font, else default
     try:
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
     except:
         font = ImageFont.load_default()
-    # Wrap text? simple center
     bbox = draw.textbbox((0, 0), title_text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    position = ((1080 - text_width) // 2, (1350 - text_height) // 2)
-    draw.text(position, title_text, fill=(255, 255, 255), font=font, stroke_width=3, stroke_fill=(0, 0, 0))
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    draw.text(((1080 - text_w)//2, (1350 - text_h)//2), title_text,
+              fill=(255,255,255), font=font, stroke_width=3, stroke_fill=(0,0,0))
     title_path = "title.png"
     title_img.save(title_path)
 
-    # Build input list with durations
-    # Format: file 'path'\nduration X\n
-    with open("concat_list.txt", "w") as f:
-        f.write(f"file '{title_path}'\n")
-        f.write("duration 2\n")
-        for img in image_paths:
-            f.write(f"file '{img}'\n")
-            if video_style == "fast":
-                f.write("duration 1.5\n")
-            elif video_style == "medium":
-                f.write("duration 2.0\n")
-            else:
-                f.write("duration 2.5\n")
-        # Last image needs no duration after (or repeat last file)
-        # ffmpeg concat demuxer requires last line to be the last file again without duration
-        f.write(f"file '{image_paths[-1]}'\n")
+    # 2. Prepare durations
+    if video_style == "fast":
+        img_dur = 1.5
+    elif video_style == "medium":
+        img_dur = 2.0
+    else:
+        img_dur = 2.5
+    title_dur = 2.0
+    fade_dur = 0.5  # 0.5 second crossfade
 
-    # FFmpeg command
+    # 3. Build FFmpeg command with xfade filter
+    # We'll chain inputs: title + image1 + image2 + ... + image6
+    inputs = [title_path] + image_paths
+    # Build a complex filter that fades between each pair
+    filter_parts = []
+    # Start with the first input (title)
+    filter_parts.append(f"[0:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v0];")
+    # For each subsequent image, apply scale/pad and then xfade with previous
+    for i, img in enumerate(image_paths):
+        idx = i+1
+        filter_parts.append(
+            f"[{idx}:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v{idx}];"
+        )
+        if i == 0:
+            # First fade: title -> image1
+            filter_parts.append(
+                f"[v0][v1]xfade=transition=fade:duration={fade_dur}:offset={title_dur}[v01];"
+            )
+            prev_label = "v01"
+        else:
+            # Subsequent fades
+            offset = title_dur + i*img_dur - (i-1)*fade_dur  # adjust for overlapping fades
+            filter_parts.append(
+                f"[{prev_label}][v{idx}]xfade=transition=fade:duration={fade_dur}:offset={offset}[v{prev_label}{idx}];"
+            )
+            prev_label = f"{prev_label}{idx}"
+    # The final output label
+    filter_parts.append(f"[{prev_label}]format=yuv420p[vout]")
+
+    filter_complex = "".join(filter_parts)
+
+    # Input list
+    input_args = []
+    for inp in inputs:
+        input_args.extend(["-loop", "1", "-t", str(title_dur if inp==title_path else img_dur), "-i", inp])
+
     cmd = [
         "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", "concat_list.txt",
-        "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "fast", "-crf", "23",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
         "-r", "24",
         output
     ]
-    print("🎬 Running FFmpeg...")
+    print("🎬 Running FFmpeg crossfade...")
     subprocess.run(cmd, check=True)
-    print("✅ FFmpeg finished.")
+    print(f"✅ Video created: {output}")
 
+# ================== MAIN ==================
 def main():
     print("🚀 Starting daily influencer content generation...")
     theme_name = random.choice(list(THEMES.keys()))
@@ -381,13 +422,14 @@ def main():
     image_paths = []
 
     for i, prompt in enumerate(theme["scenes"]):
+        # Generate at max 2048x2048 (Pollinations limit), then upscale to 4K
         url = generate_fashion_images(prompt, seed=daily_seed, width=2048, height=2048)
         resp = requests.get(url)
         if resp.status_code == 200:
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            ultra_sharpen_and_pop(path)
+            upscale_and_sharpen(path)   # 4K upscale + professional sharpening
             image_paths.append(path)
             print(f"✅ Image {i+1} saved & enhanced")
         else:
@@ -397,33 +439,27 @@ def main():
         print("Not enough images, aborting.")
         return
 
-    # Safety check
+    # Safety check (on the upscaled images)
     for img in image_paths:
         if not is_safe(img):
             print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
-    # Video creation via FFmpeg (guaranteed)
+    # Create crossfade video
     video_output = "daily_video.mp4"
     try:
-        create_video_ffmpeg(image_paths, theme["title"], theme["video_style"], video_output)
-        if not os.path.exists(video_output):
-            # Fallback: a simple black video
-            subprocess.run([
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
-                "-c:v", "libx264", video_output
-            ], check=True)
+        create_crossfade_video(image_paths, theme["title"], theme["video_style"], video_output)
     except Exception as e:
-        print(f"❌ FFmpeg failed: {e}")
+        print(f"❌ Video creation failed: {e}")
         traceback.print_exc()
-        # Last resort: create a black placeholder
+        # Fallback: create a simple 3‑second black video
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
             "-c:v", "libx264", video_output
         ], check=True)
-        print("⚠️ Created placeholder video.")
+        print("⚠️ Fallback black video created.")
 
-    # Caption (always present)
+    # Caption (always produced)
     caption = create_caption(theme["caption_context"])
     with open("caption.txt", "w") as f:
         f.write(caption)
