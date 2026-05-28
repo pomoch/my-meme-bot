@@ -26,7 +26,7 @@ jobs:
       - name: Generate influencer content
         run: python main.py
 
-      - name: Upload artifacts (backup)
+      - name: Upload artifacts (full‑quality backup)
         uses: actions/upload-artifact@v6
         with:
           name: daily-influencer-drop
@@ -35,7 +35,7 @@ jobs:
             daily_video.mp4
             caption.txt
 
-      - name: Send email with all files
+      - name: Send email with compressed attachments
         uses: dawidd6/action-send-mail@v17
         with:
           server_address: smtp.gmail.com
@@ -49,9 +49,9 @@ jobs:
           body: |
             Hey! Your daily content is ready.
 
-            📸 6 ultra‑sharp photos
-            🎬 1 polished video
+            📸 6 ultra‑sharp 4K photos
+            🎬 1 cinematic crossfade video
             💬 Caption inside caption.txt
 
-            All files attached – just download and post. 🔥
+            (Full‑resolution originals are in the GitHub Artifacts if email files are too large.)
           attachments: image_1.jpg,image_2.jpg,image_3.jpg,image_4.jpg,image_5.jpg,image_6.jpg,daily_video.mp4,caption.txt
