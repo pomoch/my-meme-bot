@@ -6,7 +6,7 @@ def generate_fashion_images(prompt, seed, width=2048, height=2048):
         "heart-shaped face, natural makeup, fit toned body, 25 years old, "
         "shot on Hasselblad X2D 100C, 100 megapixel, f/1.4, tack-sharp focus, "
         "ultra high definition, professional lighting, skin texture visible, "
-        "noise-free, editorial fashion photography, 2026 standards"
+        "noise-free, editorial fashion photography, vibrant colors, 2026 standards"
     )
     full_prompt = f"{base}, {prompt}"
     encoded = requests.utils.quote(full_prompt)
