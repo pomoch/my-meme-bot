@@ -1,10 +1,8 @@
 import os, requests, random, subprocess, traceback
-import numpy as np
-from PIL import Image, ImageFilter, ImageDraw, ImageFont
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
 from generate_image import generate_fashion_images
 from generate_caption import create_caption
 from safety_check import is_safe
-
 # ============================================================
 # THEMES – identical to your previous one, no changes needed
 # ============================================================
@@ -290,120 +288,153 @@ THEMES = {
         ]
     }
 }
-def natural_sharpen(path):
+def realistic_enhance(path):
     """
-    Apply a very mild unsharp mask to mimic phone camera clarity,
-    then save at 100% quality to get 10-15 MB without artificial look.
+    Upscale to 2730x3640 (perfect 3:4 portrait), apply natural sharpening,
+    and boost contrast slightly to mimic phone camera processing.
+    Output: 5-8 MB, crisp but not artificial.
     """
     try:
         img = Image.open(path).convert("RGB")
-        # Very subtle sharpening (radius=2.0, amount=80%) – barely noticeable
-        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=80, threshold=3))
-        # Save at maximal quality
-        img.save(path, quality=100, subsampling=0)
+        # Upscale to 3:4 portrait (2730x3640) using Lanczos
+        img = img.resize((2730, 3640), Image.LANCZOS)
+
+        # Mild unsharp mask (radius 2.0, amount 120%) – enhances clarity without halos
+        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=120, threshold=3))
+
+        # Subtle contrast boost (1.08) to make the image pop
+        img = ImageEnhance.Contrast(img).enhance(1.08)
+
+        # Save at 95% quality – good balance between size and detail
+        img.save(path, quality=95, subsampling=0)
         size_mb = os.path.getsize(path) / (1024*1024)
-        print(f"📱 Phone‑natural sharpened: {path} ({size_mb:.1f} MB)")
+        print(f"📱 Realistic enhanced: {path} ({size_mb:.1f} MB)")
     except Exception as e:
-        print(f"⚠️ Sharpening failed: {e}")
+        print(f"⚠️ Enhancement failed for {path}: {e}")
 
-# ================== KEN BURNS VIDEO (FFmpeg zoompan) ==================
-def create_kenburns_video(image_paths, title_text, video_style, output):
+# ================== RELIABLE VIDEO (ZOOM + CROSSFADE) ==================
+def create_realistic_video(image_paths, title_text, video_style, output):
     """
-    Build a video with a title card, then each image slowly zoomed/panned.
-    Duration per image: 4 seconds (slow), 3s (medium), 2.5s (fast)
-    Bitrate: 8 Mbps → final video ~25-30 MB.
+    Build a video with:
+    - Title card (2 sec)
+    - Each image with a slow zoom (Ken Burns) – 4 sec for slow, 3 for medium, 2.5 for fast
+    - Smooth crossfade (0.5 sec) between all clips
+    - High bitrate (10 Mbps) to ensure 20-30 MB final size.
     """
-    import math
+    # Durations
+    if video_style == "fast":
+        img_dur = 2.5
+    elif video_style == "medium":
+        img_dur = 3.0
+    else:
+        img_dur = 4.0   # GRWM/vlog
+    title_dur = 2.0
+    fade_dur = 0.5
 
-    # Generate title image (same as before)
-    title_img = Image.new("RGB", (1080, 1350), (0,0,0))
+    # Create title image
+    title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
     draw = ImageDraw.Draw(title_img)
     try:
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
     except:
         font = ImageFont.load_default()
-    bbox = draw.textbbox((0,0), title_text, font=font)
+    bbox = draw.textbbox((0, 0), title_text, font=font)
     tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
     draw.text(((1080-tw)//2, (1350-th)//2), title_text,
               fill=(255,255,255), font=font, stroke_width=3, stroke_fill=(0,0,0))
     title_path = "title.png"
     title_img.save(title_path)
 
-    # Set durations
-    if video_style == "fast":
-        img_dur = 2.5
-    elif video_style == "medium":
-        img_dur = 3.0
-    else:
-        img_dur = 4.0   # longer for GRWM/vlog/haul
-    title_dur = 2.0
+    # Step 1: Generate individual zoomed clips for each image (including title)
+    clips = []  # list of temporary filenames
+    # Title (no zoom, just static) – 2 sec
+    title_clip = "title_clip.mp4"
+    cmd_title = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-t", str(title_dur), "-i", title_path,
+        "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-preset", "fast", "-crf", "18",
+        "-t", str(title_dur),
+        title_clip
+    ]
+    subprocess.run(cmd_title, check=True)
+    clips.append(title_clip)
 
-    # Build a complex filter that applies zoompan to each input
-    # inputs: title (index 0) then images (1..6)
-    inputs = [title_path] + image_paths
-    filter_parts = []
-    # Title: just scale and pad (no zoom)
-    filter_parts.append(
-        f"[0:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS,trim=duration={title_dur}[v0];"
-    )
-    # For each image, apply zoompan to simulate Ken Burns
+    # For each image, apply zoompan to simulate slow zoom
     for i, img_path in enumerate(image_paths):
-        idx = i+1
-        # Zoompan: start zoom=1.0, end zoom=1.1, with slight random pan
-        # x and y expressions: pan slowly from 0 to 0.05*width
-        # We'll use a fixed pan for simplicity, but randomize seed
-        pan_x_end = random.uniform(-0.03, 0.03)  # small horizontal shift
-        pan_y_end = random.uniform(-0.03, 0.03)  # small vertical shift
-        filter_parts.append(
-            f"[{idx}:v]scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-            f"setpts=PTS-STARTPTS,"
-            f"zoompan=z='min(zoom+0.001,1.1)':x='iw/2-(iw/zoom/2)+{pan_x_end}*on':y='ih/2-(ih/zoom/2)+{pan_y_end}*on':d={img_dur*24}:s=1080x1350,"
-            f"trim=duration={img_dur}[v{idx}];"
-        )
-    # Concatenate with crossfade (0.8s fade)
-    filter_parts.append(
-        f"[v0][v1]xfade=transition=fade:duration=0.8:offset={title_dur}[v01];"
-    )
-    prev = "v01"
+        clip_name = f"clip_{i}.mp4"
+        # Zoom from 1.0 to 1.1 over img_dur seconds, with slight random pan
+        pan_x = random.uniform(-0.02, 0.02)  # small horizontal shift
+        pan_y = random.uniform(-0.02, 0.02)  # small vertical shift
+        zoom_expr = f"zoom+0.1/{img_dur}"
+        x_expr = f"iw/2-(iw/zoom/2)+{pan_x}*on"
+        y_expr = f"ih/2-(ih/zoom/2)+{pan_y}*on"
+        cmd_zoom = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-t", str(img_dur), "-i", img_path,
+            "-vf",
+            f"scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+            f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={img_dur*24}:s=1080x1350,"
+            f"fps=24",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-preset", "fast", "-crf", "18",
+            "-t", str(img_dur),
+            clip_name
+        ]
+        subprocess.run(cmd_zoom, check=True)
+        clips.append(clip_name)
+
+    # Step 2: Concatenate all clips with crossfade
+    # We'll use the concat protocol with a list file containing durations and then apply xfade via filter_complex
+    # Simpler: use concat with a filter complex that adds xfade. We'll build a single ffmpeg command.
+    # First, create a file list for concat demuxer (but xfade won't work with that). Better: use multiple inputs.
+    # Let's build the complex filter manually using the clips we just generated.
+    input_args = []
+    for clip in clips:
+        input_args.extend(["-i", clip])
+
+    # Build filter complex: start with [0:v] (title), then for each subsequent clip, xfade with previous
+    filter_parts = []
+    filter_parts.append(f"[0:v]setpts=PTS-STARTPTS[v0];")
+    for i in range(1, len(clips)):
+        filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}];")
+    # Now chain xfades
+    prev = "v0"
     offset = title_dur
-    for i in range(2, len(image_paths)+1):
+    for i in range(1, len(clips)):
         next_label = f"v{i}"
-        offset += img_dur - 0.8  # overlap
         filter_parts.append(
-            f"[{prev}][{next_label}]xfade=transition=fade:duration=0.8:offset={offset}[{prev}{i}];"
+            f"[{prev}][{next_label}]xfade=transition=fade:duration={fade_dur}:offset={offset}[{prev}{i}];"
         )
         prev = f"{prev}{i}"
+        offset += img_dur - fade_dur  # adjust for overlap
     filter_parts.append(f"[{prev}]format=yuv420p[vout]")
 
     filter_complex = "".join(filter_parts)
 
-    # Build input arguments: for each input, set duration with -t
-    input_args = []
-    for i, inp in enumerate(inputs):
-        if i == 0:
-            dur = title_dur
-        else:
-            dur = img_dur
-        input_args.extend(["-loop", "1", "-t", str(dur), "-i", inp])
-
-    cmd = [
+    cmd_concat = [
         "ffmpeg", "-y",
         *input_args,
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-c:v", "libx264",
-        "-preset", "slow",        # better compression for realistic grain
-        "-crf", "18",             # high quality
-        "-b:v", "8M",            # target bitrate
-        "-maxrate", "10M",
-        "-bufsize", "16M",
+        "-preset", "slow",
+        "-crf", "18",
+        "-b:v", "10M",
+        "-maxrate", "12M",
+        "-bufsize", "20M",
         "-r", "24",
         output
     ]
-    print("🎥 Creating Ken Burns video...")
-    subprocess.run(cmd, check=True)
+    print("🎥 Building final video with crossfade...")
+    subprocess.run(cmd_concat, check=True)
+    # Clean up temporary clips
+    for clip in clips:
+        os.remove(clip)
+    os.remove(title_path)
     size_mb = os.path.getsize(output) / (1024*1024)
-    print(f"✅ Video ready: {output} ({size_mb:.1f} MB)")
+    print(f"✅ Video created: {output} ({size_mb:.1f} MB)")
 
 # ================== MAIN ==================
 def main():
@@ -416,13 +447,14 @@ def main():
     image_paths = []
 
     for i, prompt in enumerate(theme["scenes"]):
-        url = generate_fashion_images(prompt, seed=daily_seed, width=2048, height=2048)
+        # Generate at 2048x2730 (3:4) for better composition
+        url = generate_fashion_images(prompt, seed=daily_seed, width=2048, height=2730)
         resp = requests.get(url)
         if resp.status_code == 200:
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            natural_sharpen(path)   # light, phone‑like sharpening
+            realistic_enhance(path)   # upscale + natural sharpening
             image_paths.append(path)
             print(f"✅ Image {i+1} saved")
         else:
@@ -437,25 +469,25 @@ def main():
             print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
+    # Create video (reliable zoom + crossfade)
     video_output = "daily_video.mp4"
     try:
-        create_kenburns_video(image_paths, theme["title"], theme["video_style"], video_output)
+        create_realistic_video(image_paths, theme["title"], theme["video_style"], video_output)
     except Exception as e:
         print(f"❌ Video error: {e}")
         traceback.print_exc()
-        # Fallback black video
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
             "-c:v", "libx264", video_output
         ], check=True)
-        print("⚠️ Fallback black video.")
+        print("⚠️ Fallback black video created.")
 
     caption = create_caption(theme["caption_context"])
     with open("caption.txt", "w") as f:
         f.write(caption)
     print(f"💬 Caption: {caption}")
 
-    print("📦 Content ready.")
+    print("📦 Content ready for email delivery.")
 
 if __name__ == "__main__":
     main()
