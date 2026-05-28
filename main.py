@@ -1,6 +1,7 @@
 import os
 import requests
 import random
+from PIL import Image, ImageFilter
 from generate_image import generate_fashion_images
 from generate_video import create_themed_video
 from generate_caption import create_caption
@@ -289,6 +290,16 @@ THEMES = {
     }
 }
 
+def sharpen_image(path):
+    """Apply unsharp mask to make the image look like it was shot on a premium camera."""
+    try:
+        img = Image.open(path).convert("RGB")
+        sharpened = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=0))
+        sharpened.save(path, quality=95)
+        print(f"🔪 Sharpened {path}")
+    except Exception as e:
+        print(f"⚠️ Could not sharpen {path}: {e}")
+
 def main():
     print("🚀 Starting daily influencer content generation...")
 
@@ -312,8 +323,9 @@ def main():
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
+            sharpen_image(path)  # <-- sharpen after save
             image_paths.append(path)
-            print(f"✅ Image {i+1} generated")
+            print(f"✅ Image {i+1} generated and sharpened")
         else:
             print(f"❌ Failed to generate image {i+1}")
 
