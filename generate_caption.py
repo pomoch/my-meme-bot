@@ -1,7 +1,5 @@
-import requests
-import random
+import requests, random
 
-# Hand-crafted fallback captions (modern, flirty, emoji-rich)
 FALLBACK_CAPTIONS = [
     "Living my best life, one outfit at a time ✨",
     "New day, new slay 💁‍♀️",
@@ -37,7 +35,27 @@ FALLBACK_CAPTIONS = [
     "I’m the girl you’ve been warned about 🔥",
     "Sugar, spice, and everything nice (mostly spice) 🌶️",
     "No rain, no flowers 🌧️🌸",
-    "You can’t do epic shit with basic people 💅"
+    "You can’t do epic shit with basic people 💅",
+    "In a world full of trends, I choose to be a classic 🎞️",
+    "Own who you are 💎",
+    "Cinderella never asked for a prince – she asked for a night off ✨",
+    "I’m not shy, I’m just observing my future subjects 👑",
+    "Be a voice, not an echo 🗣️",
+    "I woke up like this (after 3 cups of coffee) ☕️",
+    "Reality called, so I hung up 📞",
+    "I’m on a seafood diet – I see food and I eat it 🍕",
+    "When nothing goes right, go left ↩️",
+    "A beautiful day to be a badass 😎",
+    "I don’t sweat – I sparkle ✨",
+    "Life is short, make every outfit count 👗",
+    "Be the energy you want to attract 🔮",
+    "Born to stand out, not fit in 🌈",
+    "Sparkle like you mean it 💖",
+    "Dress like you’re already famous 📸",
+    "Be a flamingo in a flock of pigeons 🦩",
+    "My vibe speaks louder than words 🔊",
+    "Chin up, buttercup 🌼",
+    "Today’s goal: be the reason someone smiles 😊"
 ]
 
 def create_caption(context):
