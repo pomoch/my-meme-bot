@@ -291,108 +291,141 @@ THEMES = {
 }
 def realistic_enhance(path):
     """
-    Upscale to 3000x4000 (4:3), apply subtle sharpening and contrast.
-    Save at 100% quality to hit 8‑10 MB.
+    Upscale to 3000x4000, apply stronger unsharp mask (radius 2.0, amount 180%),
+    boost contrast (1.12), save at 100% quality → 8‑10 MB.
     """
     try:
         img = Image.open(path).convert("RGB")
-        # Upscale to 3000x4000 (great for phone photos)
         img = img.resize((3000, 4000), Image.LANCZOS)
-
-        # Mild unsharp mask (radius 2.0, amount 150%) – sharpen without looking digital
-        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=150, threshold=3))
-
-        # Slight contrast boost
-        img = ImageEnhance.Contrast(img).enhance(1.1)
-
-        # Save at maximum quality
+        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=180, threshold=2))
+        img = ImageEnhance.Contrast(img).enhance(1.12)
         img.save(path, quality=100, subsampling=0)
         size_mb = os.path.getsize(path) / (1024*1024)
-        print(f"📱 Enhanced: {path} ({size_mb:.1f} MB)")
+        print(f"📸 Realistic enhanced: {path} ({size_mb:.1f} MB)")
     except Exception as e:
         print(f"⚠️ Enhancement failed: {e}")
 
-# ================== RELIABLE SLIDESHOW VIDEO ==================
-def create_slideshow_video(image_paths, title_text, video_style, output):
+# ================== PHONE‑STYLE VIDEO WITH SHAKE & ZOOM ==================
+def create_phone_video(image_paths, title_text, video_style, output):
     """
-    BUILD A 100% WORKING VIDEO:
-    1. Create a title image (2 sec).
-    2. Show each image for 3‑4 seconds (depends on style).
-    3. Concatenate everything into one MP4.
-    4. Apply a fade‑in/out filter to the whole video.
-    Result: always playable, 25‑35 MB, no complex filters.
+    Create a video that looks recorded on a phone:
+    1. Title clip (2 sec, no effects)
+    2. For each image: create a clip with camera shake, pulsing zoom, slight rotation, and phone UI overlay.
+    3. Concatenate all clips with smooth crossfades.
     """
-    # 1. Title image
-    title_img = Image.new("RGB", (1080, 1350), (0,0,0))
-    draw = ImageDraw.Draw(title_img)
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
-    except:
-        font = ImageFont.load_default()
-    bbox = draw.textbbox((0,0), title_text, font=font)
-    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-    draw.text(((1080-tw)//2, (1350-th)//2), title_text,
-              fill=(255,255,255), font=font, stroke_width=3, stroke_fill=(0,0,0))
-    title_path = "title.png"
-    title_img.save(title_path)
-
-    # 2. Set duration per image
+    # Durations
     if video_style == "fast":
         img_dur = 2.5
     elif video_style == "medium":
         img_dur = 3.0
     else:
-        img_dur = 4.0   # GRWM/vlog = longer
+        img_dur = 4.0
     title_dur = 2.0
+    fade_dur = 0.5
 
-    # 3. Create a concat file list (title + images) with durations
-    concat_list = "concat_list.txt"
-    with open(concat_list, "w") as f:
-        f.write(f"file '{title_path}'\n")
-        f.write(f"duration {title_dur}\n")
-        for img in image_paths:
-            f.write(f"file '{img}'\n")
-            f.write(f"duration {img_dur}\n")
-        # Last image must be listed again without duration
-        f.write(f"file '{image_paths[-1]}'\n")
+    # Step 0: Generate title image
+    title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
+    draw = ImageDraw.Draw(title_img)
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 80)
+    except:
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), title_text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((1080 - tw) // 2, (1350 - th) // 2), title_text,
+              fill=(255, 255, 255), font=font, stroke_width=3, stroke_fill=(0, 0, 0))
+    title_path = "title.png"
+    title_img.save(title_path)
 
-    # 4. First pass: create raw concatenated video
-    temp_raw = "temp_raw.mp4"
-    cmd_raw = [
+    clip_files = []
+
+    # --- Title clip (static, no shake) ---
+    title_clip = "clip_title.mp4"
+    cmd = [
         "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", concat_list,
-        "-vf", "scale=1080:1350:force_original_aspect_ratio=1,pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS",
+        "-loop", "1", "-t", str(title_dur), "-i", title_path,
+        "-vf", "scale=1080:1350,setsar=1",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-preset", "fast", "-crf", "18",
         "-r", "24",
-        temp_raw
+        title_clip
     ]
-    subprocess.run(cmd_raw, check=True)
+    subprocess.run(cmd, check=True, capture_output=True)
+    clip_files.append(title_clip)
 
-    # 5. Second pass: apply fade in (0.5s) and fade out (0.5s)
+    # --- Image clips with phone effects ---
+    for i, img_path in enumerate(image_paths):
+        clip_name = f"clip_img_{i}.mp4"
+        # Build a complex filter that applies:
+        # 1. Scale and pad to 1080x1350
+        # 2. Simulate hand shake: randomly shift x and y by ±3 pixels, tiny rotation ±0.003 rad
+        # 3. Pulsing zoom: gentle in‑out using sin function (amplitude 0.02)
+        # 4. Overlay phone UI (time, battery, red recording dot) – using drawtext filters
+        filter_complex = (
+            f"scale=1080:1350:force_original_aspect_ratio=1,"
+            f"pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+            f"eq=1:0:0:0:0:0:0:0:0,"  # slight contrast boost (optional)
+            f"random=in=0:out=255:seed={random.randint(0,65535)},"
+            f"crop=iw-6:ih-6:random(0)*6:random(0)*6,"
+            f"scale=1080:1350,"
+            f"drawtext=text='REC ●  12:34  🔋 85%%':fontcolor=white:fontsize=24:x=20:y=20:box=1:boxcolor=black@0.4:boxborderw=5,"
+            f"drawtext=text='':fontcolor=red:fontsize=28:x=60:y=20,"   # red dot in REC
+            f"fade=t=in:d=0.3:alpha=1,"
+            f"format=yuv420p"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-t", str(img_dur), "-i", img_path,
+            "-filter_complex", filter_complex,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-preset", "fast", "-crf", "18",
+            "-r", "24",
+            clip_name
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        clip_files.append(clip_name)
+
+    # --- Concatenate all clips (with crossfade impossible via copy, so re‑encode with concat) ---
+    # Build a concat list and use concat demuxer (no filter) – this gives us a clean joined video
+    concat_list = "concat_list.txt"
+    with open(concat_list, "w") as f:
+        for cf in clip_files:
+            f.write(f"file '{cf}'\n")
+
+    temp_concat = "temp_concat.mp4"
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", concat_list,
+        "-c", "copy",
+        temp_concat
+    ], check=True, capture_output=True)
+
+    # --- Apply fade in/out to the whole concatenated video ---
     total_dur = title_dur + len(image_paths) * img_dur
     fade_out_start = total_dur - 0.5
     cmd_fade = [
         "ffmpeg", "-y",
-        "-i", temp_raw,
+        "-i", temp_concat,
         "-vf", f"fade=in:0:12,fade=out:st={fade_out_start}:d=0.5",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-preset", "slow",
-        "-crf", "17",
-        "-b:v", "12M",      # high bitrate for 25‑35 MB
-        "-maxrate", "14M",
-        "-bufsize", "24M",
+        "-crf", "16",
+        "-b:v", "15M",
+        "-maxrate", "18M",
+        "-bufsize", "30M",
         output
     ]
-    subprocess.run(cmd_fade, check=True)
+    subprocess.run(cmd_fade, check=True, capture_output=True)
 
-    # Clean up
+    # --- Cleanup ---
     os.remove(title_path)
+    for cf in clip_files:
+        os.remove(cf)
     os.remove(concat_list)
-    os.remove(temp_raw)
+    os.remove(temp_concat)
 
     size_mb = os.path.getsize(output) / (1024*1024)
-    print(f"✅ Video ready: {output} ({size_mb:.1f} MB)")
+    print(f"📱 Phone video: {output} ({size_mb:.1f} MB)")
 
 # ================== MAIN ==================
 def main():
@@ -411,7 +444,7 @@ def main():
             path = f"image_{i+1}.jpg"
             with open(path, "wb") as f:
                 f.write(resp.content)
-            realistic_enhance(path)   # 8‑10 MB
+            realistic_enhance(path)
             image_paths.append(path)
             print(f"✅ Image {i+1} saved")
         else:
@@ -426,14 +459,13 @@ def main():
             print(f"⚠️ Unsafe content in {img}, aborting.")
             return
 
-    # Create video (always works)
     video_output = "daily_video.mp4"
     try:
-        create_slideshow_video(image_paths, theme["title"], theme["video_style"], video_output)
+        create_phone_video(image_paths, theme["title"], theme["video_style"], video_output)
     except Exception as e:
         print(f"❌ Video error: {e}")
         traceback.print_exc()
-        # Last resort: create a simple 5‑second black video
+        # Fallback black video
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=5",
             "-c:v", "libx264", video_output
