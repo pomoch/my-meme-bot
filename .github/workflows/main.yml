@@ -21,7 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install Python dependencies
-        run: pip install requests pillow "opennsfw2[tf-keras]"
+        run: pip install requests pillow opencv-contrib-python opennsfw2
 
       - name: Generate influencer content
         run: python main.py
