@@ -292,7 +292,7 @@ def realistic_enhance(path):
     """
     Upscale to 2730x3640 (perfect 3:4 portrait), apply natural sharpening,
     and boost contrast slightly to mimic phone camera processing.
-    Output: 5-8 MB, crisp but not artificial.
+    Output: 8-10 MB, crisp but not artificial.
     """
     try:
         img = Image.open(path).convert("RGB")
@@ -300,7 +300,7 @@ def realistic_enhance(path):
         img = img.resize((2730, 3640), Image.LANCZOS)
 
         # Mild unsharp mask (radius 2.0, amount 120%) – enhances clarity without halos
-        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=120, threshold=3))
+        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=150, threshold=3))
 
         # Subtle contrast boost (1.08) to make the image pop
         img = ImageEnhance.Contrast(img).enhance(1.08)
