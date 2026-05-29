@@ -289,70 +289,61 @@ THEMES = {
         ]
     }
 }
-def realistic_enhance(path):
+def upscale_with_waifu2x(path):
+    """
+    Use waifu2x model to upscale 2x and reduce noise, then resize to 3000x4000.
+    This gives photo‑level sharpness.
+    """
     try:
+        img = cv2.imread(path)
+        # Waifu2x model (anime‑style but works great on skin)
+        sr = cv2.dnn_superres.DnnSuperResImpl_create()
+        sr.readModel("waifu2x_photo.onnx")   # we'll download it below
+        sr.setModel("waifu2x", 2)
+        upscaled = sr.upsample(img)
+        # Resize to exact 3000x4000 using Lanczos
+        upscaled = cv2.resize(upscaled, (3000, 4000), interpolation=cv2.INTER_LANCZOS4)
+        # Convert to PIL for mild sharpening and save
+        upscaled_rgb = cv2.cvtColor(upscaled, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(upscaled_rgb)
+        pil_img = pil_img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=150, threshold=2))
+        pil_img.save(path, quality=100, subsampling=0)
+        print(f"🔍 Upscaled: {path} ({os.path.getsize(path)/1024**2:.1f} MB)")
+    except Exception as e:
+        print(f"⚠️ Upscale failed, using fallback sharpening: {e}")
+        # Fallback: normal Lanczos resize
         img = Image.open(path).convert("RGB")
-        # Upscale to 3000x4000 (4:3)
         img = img.resize((3000, 4000), Image.LANCZOS)
-        # Stronger sharpening (200%) with small radius to avoid halos
         img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=200, threshold=2))
-        # Boost contrast slightly
-        img = ImageEnhance.Contrast(img).enhance(1.1)
-        # Save at 100% quality – yields 8‑10 MB
         img.save(path, quality=100, subsampling=0)
-        size_mb = os.path.getsize(path) / (1024*1024)
-        print(f"📸 Enhanced: {path} ({size_mb:.1f} MB)")
-    except Exception as e:
-        print(f"⚠️ Enhancement failed: {e}")
 
-# ================== RELIABLE PHONE VIDEO (ALWAYS WORKS) ==================
-def enhance_to_phone_realism(path):
+# ================== DOWNLOAD WAIFU2X MODEL (once) ==================
+def ensure_waifu2x_model():
+    if not os.path.exists("waifu2x_photo.onnx"):
+        print("⬇️ Downloading waifu2x model...")
+        url = "https://github.com/nagadomi/waifu2x/raw/master/models/upconv_7_photo/upconv_7_photo.onnx"
+        r = requests.get(url)
+        with open("waifu2x_photo.onnx", "wb") as f:
+            f.write(r.content)
+        print("✅ Model downloaded.")
+
+# ================== STOP‑MOTION PHONE VIDEO ==================
+def create_motion_video(image_sets, title_text, video_style, output):
     """
-    Resize to 3000x4000, apply realistic sharpening, subtle color grading,
-    and save at 100% quality → 8‑10 MB.
+    Each 'scene' has 3 images (slight pose differences).
+    We play them at 8 FPS to simulate low‑frame‑rate phone recording.
+    Fast cuts, camera shake, phone UI.
     """
-    try:
-        img = Image.open(path).convert("RGB")
-
-        # Resize to 4:3 portrait (3000x4000)
-        img = img.resize((3000, 4000), Image.LANCZOS)
-
-        # Sharpening that mimics phone camera (radius 1.5, amount 180%)
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=180, threshold=2))
-
-        # Color grading: slight warmth (increase red, yellow) and contrast
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(1.08)
-        # Boost saturation slightly for phone pop
-        from PIL import ImageEnhance as IE
-        img = IE.Color(img).enhance(1.05)
-
-        # Save at maximum quality
-        img.save(path, quality=100, subsampling=0)
-        print(f"📸 Realistic: {path} ({os.path.getsize(path)/1024**2:.1f} MB)")
-    except Exception as e:
-        print(f"⚠️ Enhancement failed: {e}")
-
-# ================== FAIL‑PROOF PHONE VIDEO (Montage) ==================
-def create_phone_montage(image_paths, title_text, video_style, output):
-    """
-    Creates a fast‑paced video that looks recorded on a phone:
-    - Title card (2s)
-    - Rapid cuts (1s per image)
-    - Random camera shake (jitter + rotate)
-    - Phone UI overlay
-    - Fade in/out
-    """
-    # Speed settings
     if video_style == "fast":
-        img_dur = 1.0   # super quick cuts
+        scene_dur = 0.8   # per scene
     elif video_style == "medium":
-        img_dur = 1.2
+        scene_dur = 1.0
     else:
-        img_dur = 1.5   # slightly longer for GRWM
+        scene_dur = 1.2
     title_dur = 2.0
+    fps = 8   # low frame rate for authentic phone look
 
-    # --- Title image ---
+    # Title image
     title_img = Image.new("RGB", (1080, 1350), (0,0,0))
     draw = ImageDraw.Draw(title_img)
     try:
@@ -361,14 +352,13 @@ def create_phone_montage(image_paths, title_text, video_style, output):
         font = ImageFont.load_default()
     bbox = draw.textbbox((0,0), title_text, font=font)
     tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-    draw.text(((1080-tw)//2, (1350-th)//2), title_text, fill="white",
-              font=font, stroke_width=3, stroke_fill="black")
+    draw.text(((1080-tw)//2, (1350-th)//2), title_text, fill="white", font=font, stroke_width=3, stroke_fill="black")
     title_path = "title.png"
     title_img.save(title_path)
 
     clip_files = []
 
-    # --- Title clip (no shake) ---
+    # Title clip
     title_clip = "clip_title.mp4"
     run_ffmpeg([
         "ffmpeg", "-y",
@@ -376,46 +366,46 @@ def create_phone_montage(image_paths, title_text, video_style, output):
         "-vf", "scale=1080:1350,setsar=1",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-preset", "fast", "-crf", "18",
-        "-r", "24",
+        "-r", str(fps),
         title_clip
     ], "title")
     clip_files.append(title_clip)
 
-    # --- Image clips with camera shake + phone UI ---
-    for i, img_path in enumerate(image_paths):
-        clip_name = f"clip_img_{i}.mp4"
-        # Camera shake filter: random horizontal/vertical shift ±6px, slight rotation ±0.02 rad
-        shake = (
-            "drawbox=in=0:0:0:0:color=black@0:t=fill,"  # just a dummy, we'll use crop+pad
-            "crop=iw-12:ih-12:random(0)*12:random(0)*12,"
-            "scale=1080:1350,"
-            "rotate=0.02*sin(2*PI*t*5):ow=1080:oh=1350:fillcolor=black"
-        )
-        # Phone UI overlay
-        phone_ui = (
-            "drawtext=text='REC ●  12:34  🔋 85%%':fontcolor=white:fontsize=24:x=20:y=20:"
-            "box=1:boxcolor=black@0.4:boxborderw=5"
-        )
-        filter_complex = (
-            f"scale=1080:1350:force_original_aspect_ratio=1,"
-            f"pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-            f"{shake},"
-            f"fps=24,"
-            f"{phone_ui},"
-            f"format=yuv420p"
-        )
+    # For each scene, create a clip that cycles the 3 images
+    for i, scene_imgs in enumerate(image_sets):
+        clip_name = f"clip_scene_{i}.mp4"
+        # Build input list: 3 images, looped to fill scene_dur
+        input_args = []
+        for img in scene_imgs:
+            input_args.extend(["-loop", "1", "-t", str(scene_dur/3), "-i", img])
+        # Filter complex: concat the three streams, then apply shake + phone UI
+        filter_parts = []
+        # First, trim each input to the right duration
+        for j in range(3):
+            filter_parts.append(f"[{j}:v]trim=duration={scene_dur/3},setpts=PTS-STARTPTS[v{j}];")
+        # Concatenate
+        filter_parts.append(f"[v0][v1][v2]concat=n=3:v=1:a=0,"
+                            f"scale=1080:1350:force_original_aspect_ratio=1,"
+                            f"pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+                            f"fps={fps},"
+                            f"crop=iw-12:ih-12:random(0)*12:random(0)*12,"   # shake
+                            f"scale=1080:1350,"
+                            f"drawtext=text='REC ●  12:34  🔋 85%%':fontcolor=white:fontsize=24:x=20:y=20:box=1:boxcolor=black@0.4:boxborderw=5,"
+                            f"format=yuv420p[vout]")
+        filter_complex = "".join(filter_parts)
         run_ffmpeg([
             "ffmpeg", "-y",
-            "-loop", "1", "-t", str(img_dur), "-i", img_path,
+            *input_args,
             "-filter_complex", filter_complex,
+            "-map", "[vout]",
             "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-preset", "fast", "-crf", "18",
-            "-r", "24",
+            "-r", str(fps),
             clip_name
-        ], f"image {i+1}")
+        ], f"scene {i+1}")
         clip_files.append(clip_name)
 
-    # --- Concatenate all clips (copy) ---
+    # Concatenate all scene clips
     concat_list = "concat_list.txt"
     with open(concat_list, "w") as f:
         for cf in clip_files:
@@ -426,10 +416,10 @@ def create_phone_montage(image_paths, title_text, video_style, output):
         "-f", "concat", "-safe", "0", "-i", concat_list,
         "-c", "copy",
         temp_concat
-    ], "concat")
+    ], "concat scenes")
 
-    # --- Fade in/out ---
-    total_dur = title_dur + len(image_paths) * img_dur
+    # Fade in/out
+    total_dur = title_dur + len(image_sets) * scene_dur
     fade_out_start = total_dur - 0.3
     run_ffmpeg([
         "ffmpeg", "-y",
@@ -450,7 +440,7 @@ def create_phone_montage(image_paths, title_text, video_style, output):
         os.remove(cf)
     os.remove(concat_list)
     os.remove(temp_concat)
-    print(f"📱 Montage ready: {output} ({os.path.getsize(output)/1024**2:.1f} MB)")
+    print(f"📱 Motion video: {output} ({os.path.getsize(output)/1024**2:.1f} MB)")
 
 def run_ffmpeg(cmd, desc):
     print(f"⏳ {desc}...")
@@ -462,43 +452,56 @@ def run_ffmpeg(cmd, desc):
 
 # ================== MAIN ==================
 def main():
+    ensure_waifu2x_model()
     print("🚀 Starting...")
     theme_name = random.choice(list(THEMES.keys()))
     theme = THEMES[theme_name]
     print(f"🎭 {theme_name} – {theme['title']}")
 
     daily_seed = random.randint(1, 100000)
-    image_paths = []
+    image_sets = []   # list of lists (3 images per scene)
 
     for i, prompt in enumerate(theme["scenes"]):
-        url = generate_fashion_images(prompt, seed=daily_seed, width=2048, height=2730)
-        resp = requests.get(url)
-        if resp.status_code == 200:
-            path = f"image_{i+1}.jpg"
-            with open(path, "wb") as f:
-                f.write(resp.content)
-            enhance_to_phone_realism(path)
-            image_paths.append(path)
-            print(f"✅ Image {i+1}")
+        scene_images = []
+        # Generate 3 slightly different images by varying the seed
+        for offset in range(3):
+            seed = daily_seed + offset*10
+            url = generate_fashion_images(prompt, seed=seed, width=2048, height=2730)
+            resp = requests.get(url)
+            if resp.status_code == 200:
+                path = f"image_{i+1}_{offset+1}.jpg"
+                with open(path, "wb") as f:
+                    f.write(resp.content)
+                upscale_with_waifu2x(path)
+                scene_images.append(path)
+            else:
+                print(f"❌ Failed to generate image {i+1}_{offset+1}")
+        if len(scene_images) == 3:
+            image_sets.append(scene_images)
+            print(f"✅ Scene {i+1} complete")
         else:
-            print(f"❌ Image {i+1} failed")
+            print(f"⚠️ Scene {i+1} incomplete, using first image repeated")
+            # Fallback: use the first image three times
+            if scene_images:
+                scene_images = [scene_images[0]]*3
+                image_sets.append(scene_images)
 
-    if len(image_paths) < 6:
-        print("Not enough images.")
+    if len(image_sets) < 6:
+        print("Not enough scenes.")
         return
 
-    for img in image_paths:
-        if not is_safe(img):
-            print(f"⚠️ Unsafe: {img}")
+    # Safety check (only first image of each scene)
+    for scene in image_sets:
+        if not is_safe(scene[0]):
+            print(f"⚠️ Unsafe: {scene[0]}")
             return
 
     video_output = "daily_video.mp4"
     try:
-        create_phone_montage(image_paths, theme["title"], theme["video_style"], video_output)
+        create_motion_video(image_sets, theme["title"], theme["video_style"], video_output)
     except Exception as e:
         print(f"❌ Video error: {e}")
         traceback.print_exc()
-        # fallback black
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=3",
             "-c:v", "libx264", video_output
