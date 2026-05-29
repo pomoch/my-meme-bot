@@ -290,29 +290,23 @@ THEMES = {
     }
 }
 def realistic_enhance(path):
-    """
-    Upscale to 3000x4000, apply stronger unsharp mask (radius 2.0, amount 180%),
-    boost contrast (1.12), save at 100% quality → 8‑10 MB.
-    """
     try:
         img = Image.open(path).convert("RGB")
+        # Upscale to 3000x4000 (4:3)
         img = img.resize((3000, 4000), Image.LANCZOS)
-        img = img.filter(ImageFilter.UnsharpMask(radius=2.0, percent=180, threshold=2))
-        img = ImageEnhance.Contrast(img).enhance(1.12)
+        # Stronger sharpening (200%) with small radius to avoid halos
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=200, threshold=2))
+        # Boost contrast slightly
+        img = ImageEnhance.Contrast(img).enhance(1.1)
+        # Save at 100% quality – yields 8‑10 MB
         img.save(path, quality=100, subsampling=0)
         size_mb = os.path.getsize(path) / (1024*1024)
-        print(f"📸 Realistic enhanced: {path} ({size_mb:.1f} MB)")
+        print(f"📸 Enhanced: {path} ({size_mb:.1f} MB)")
     except Exception as e:
         print(f"⚠️ Enhancement failed: {e}")
 
-# ================== PHONE‑STYLE VIDEO WITH SHAKE & ZOOM ==================
+# ================== RELIABLE PHONE VIDEO (ALWAYS WORKS) ==================
 def create_phone_video(image_paths, title_text, video_style, output):
-    """
-    Create a video that looks recorded on a phone:
-    1. Title clip (2 sec, no effects)
-    2. For each image: create a clip with camera shake, pulsing zoom, slight rotation, and phone UI overlay.
-    3. Concatenate all clips with smooth crossfades.
-    """
     # Durations
     if video_style == "fast":
         img_dur = 2.5
@@ -321,9 +315,8 @@ def create_phone_video(image_paths, title_text, video_style, output):
     else:
         img_dur = 4.0
     title_dur = 2.0
-    fade_dur = 0.5
 
-    # Step 0: Generate title image
+    # --- Title image ---
     title_img = Image.new("RGB", (1080, 1350), (0, 0, 0))
     draw = ImageDraw.Draw(title_img)
     try:
@@ -331,17 +324,17 @@ def create_phone_video(image_paths, title_text, video_style, output):
     except:
         font = ImageFont.load_default()
     bbox = draw.textbbox((0, 0), title_text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((1080 - tw) // 2, (1350 - th) // 2), title_text,
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    draw.text(((1080-tw)//2, (1350-th)//2), title_text,
               fill=(255, 255, 255), font=font, stroke_width=3, stroke_fill=(0, 0, 0))
     title_path = "title.png"
     title_img.save(title_path)
 
     clip_files = []
 
-    # --- Title clip (static, no shake) ---
+    # --- Title clip (static) ---
     title_clip = "clip_title.mp4"
-    cmd = [
+    run_ffmpeg([
         "ffmpeg", "-y",
         "-loop", "1", "-t", str(title_dur), "-i", title_path,
         "-vf", "scale=1080:1350,setsar=1",
@@ -349,31 +342,33 @@ def create_phone_video(image_paths, title_text, video_style, output):
         "-preset", "fast", "-crf", "18",
         "-r", "24",
         title_clip
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    ], "title clip")
     clip_files.append(title_clip)
 
-    # --- Image clips with phone effects ---
+    # --- Image clips with zoom & phone UI ---
     for i, img_path in enumerate(image_paths):
         clip_name = f"clip_img_{i}.mp4"
-        # Build a complex filter that applies:
-        # 1. Scale and pad to 1080x1350
-        # 2. Simulate hand shake: randomly shift x and y by ±3 pixels, tiny rotation ±0.003 rad
-        # 3. Pulsing zoom: gentle in‑out using sin function (amplitude 0.02)
-        # 4. Overlay phone UI (time, battery, red recording dot) – using drawtext filters
+        # Gentle zoom from 1.0 to 1.1 over the duration, with subtle pan
+        zoom_expr = f"zoom+0.1/{img_dur}"
+        x_expr = "iw/2-(iw/zoom/2)+0.02*on"
+        y_expr = "ih/2-(ih/zoom/2)+0.01*on"
+
+        # Phone UI: red recording dot, time, battery
+        phone_ui = (
+            "drawtext=text='REC ●  12:34  🔋 85%%':fontcolor=white:fontsize=24:x=20:y=20:"
+            "box=1:boxcolor=black@0.4:boxborderw=5"
+        )
+
         filter_complex = (
             f"scale=1080:1350:force_original_aspect_ratio=1,"
             f"pad=1080:1350:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-            f"eq=1:0:0:0:0:0:0:0:0,"  # slight contrast boost (optional)
-            f"random=in=0:out=255:seed={random.randint(0,65535)},"
-            f"crop=iw-6:ih-6:random(0)*6:random(0)*6,"
-            f"scale=1080:1350,"
-            f"drawtext=text='REC ●  12:34  🔋 85%%':fontcolor=white:fontsize=24:x=20:y=20:box=1:boxcolor=black@0.4:boxborderw=5,"
-            f"drawtext=text='':fontcolor=red:fontsize=28:x=60:y=20,"   # red dot in REC
-            f"fade=t=in:d=0.3:alpha=1,"
+            f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={img_dur*24}:s=1080x1350,"
+            f"fps=24,"
+            f"{phone_ui},"
             f"format=yuv420p"
         )
-        cmd = [
+
+        run_ffmpeg([
             "ffmpeg", "-y",
             "-loop", "1", "-t", str(img_dur), "-i", img_path,
             "-filter_complex", filter_complex,
@@ -381,58 +376,64 @@ def create_phone_video(image_paths, title_text, video_style, output):
             "-preset", "fast", "-crf", "18",
             "-r", "24",
             clip_name
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        ], f"image {i+1}")
         clip_files.append(clip_name)
 
-    # --- Concatenate all clips (with crossfade impossible via copy, so re‑encode with concat) ---
-    # Build a concat list and use concat demuxer (no filter) – this gives us a clean joined video
+    # --- Concatenate all clips (copy, no re‑encode) ---
     concat_list = "concat_list.txt"
     with open(concat_list, "w") as f:
         for cf in clip_files:
             f.write(f"file '{cf}'\n")
 
     temp_concat = "temp_concat.mp4"
-    subprocess.run([
+    run_ffmpeg([
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", concat_list,
         "-c", "copy",
         temp_concat
-    ], check=True, capture_output=True)
+    ], "concat")
 
-    # --- Apply fade in/out to the whole concatenated video ---
+    # --- Apply fade in/out ---
     total_dur = title_dur + len(image_paths) * img_dur
     fade_out_start = total_dur - 0.5
-    cmd_fade = [
+    run_ffmpeg([
         "ffmpeg", "-y",
         "-i", temp_concat,
         "-vf", f"fade=in:0:12,fade=out:st={fade_out_start}:d=0.5",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-preset", "slow",
-        "-crf", "16",
+        "-crf", "17",
         "-b:v", "15M",
         "-maxrate", "18M",
         "-bufsize", "30M",
         output
-    ]
-    subprocess.run(cmd_fade, check=True, capture_output=True)
+    ], "fade")
 
-    # --- Cleanup ---
+    # Cleanup
     os.remove(title_path)
     for cf in clip_files:
         os.remove(cf)
     os.remove(concat_list)
     os.remove(temp_concat)
 
-    size_mb = os.path.getsize(output) / (1024*1024)
-    print(f"📱 Phone video: {output} ({size_mb:.1f} MB)")
+    size_mb = os.path.getsize(output) / 1024**2
+    print(f"📱 Phone video ready: {output} ({size_mb:.1f} MB)")
+
+def run_ffmpeg(cmd, desc):
+    print(f"⏳ {desc}...")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"❌ FFmpeg error in '{desc}':")
+        print(res.stderr)
+        raise RuntimeError(f"FFmpeg step '{desc}' failed")
+    print(f"✅ {desc} done")
 
 # ================== MAIN ==================
 def main():
-    print("🚀 Starting daily influencer content...")
+    print("🚀 Starting daily influencer...")
     theme_name = random.choice(list(THEMES.keys()))
     theme = THEMES[theme_name]
-    print(f"🎭 Theme: {theme_name} – {theme['title']}")
+    print(f"🎭 {theme_name} – {theme['title']}")
 
     daily_seed = random.randint(1, 100000)
     image_paths = []
@@ -446,9 +447,9 @@ def main():
                 f.write(resp.content)
             realistic_enhance(path)
             image_paths.append(path)
-            print(f"✅ Image {i+1} saved")
+            print(f"✅ Image {i+1}")
         else:
-            print(f"❌ Failed to download image {i+1}")
+            print(f"❌ Image {i+1} failed")
 
     if len(image_paths) < 6:
         print("Not enough images, aborting.")
@@ -456,27 +457,26 @@ def main():
 
     for img in image_paths:
         if not is_safe(img):
-            print(f"⚠️ Unsafe content in {img}, aborting.")
+            print(f"⚠️ Unsafe: {img}")
             return
 
     video_output = "daily_video.mp4"
     try:
         create_phone_video(image_paths, theme["title"], theme["video_style"], video_output)
     except Exception as e:
-        print(f"❌ Video error: {e}")
+        print(f"❌ Video failed: {e}")
         traceback.print_exc()
-        # Fallback black video
+        # fallback black video
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1350:d=5",
             "-c:v", "libx264", video_output
         ], check=True)
-        print("⚠️ Fallback black video created.")
+        print("⚠️ Fallback black video")
 
     caption = create_caption(theme["caption_context"])
     with open("caption.txt", "w") as f:
         f.write(caption)
     print(f"💬 Caption: {caption}")
-    print("📦 Done.")
 
 if __name__ == "__main__":
     main()
